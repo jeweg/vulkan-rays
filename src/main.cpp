@@ -4,6 +4,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 #include "utils.hpp"
 #include "queues.hpp"
+#include "build_info.hpp"
 
 #define GLFW_INCLUDE_NONE
 #include "GLFW/glfw3.h"
@@ -43,6 +44,19 @@ struct SurfaceDestroyer
     SurfaceDestroyer(vk::Instance instance, VkSurfaceKHR surface) : instance(instance), surface(surface) {}
     ~SurfaceDestroyer() { vkDestroySurfaceKHR(instance, surface, nullptr); }
 };
+
+
+constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
+struct PerFrame
+{
+    std::vector<vk::UniqueCommandPool> command_pools;
+    vk::UniqueImageView swapchain_image_view;
+
+
+    vk::CommandPool get_cmd_pool(Queue q) { return command_pools[to_uint32(q)].get(); }
+};
+
+std::array<PerFrame, NUM_FRAMES_IN_FLIGHT> per_frames;
 
 
 int main()
@@ -219,7 +233,7 @@ int main()
 
             auto swapchain_ci = vk::SwapchainCreateInfoKHR{}
                                     .setSurface(surface)
-                                    .setMinImageCount(2)
+                                    .setMinImageCount(NUM_FRAMES_IN_FLIGHT)
                                     .setImageFormat(surface_format.surfaceFormat.format)
                                     .setImageColorSpace(surface_format.surfaceFormat.colorSpace)
                                     .setImageExtent(extent)
@@ -241,11 +255,48 @@ int main()
                 swapchain_ci.setQueueFamilyIndices(family_indices);
             }
 
-            vk::UniqueSwapchainKHR sc = device->createSwapchainKHRUnique(swapchain_ci);
-            return std::move(sc);
+            return std::move(device->createSwapchainKHRUnique(swapchain_ci));
         };
 
         vk::UniqueSwapchainKHR swapchain = create_swap_chain(1200, 800);
+        {
+            std::vector<vk::Image> images = device->getSwapchainImagesKHR(swapchain.get());
+
+            // vk::ImageView swapchain_image_view;
+            for (size_t i = 0; i < images.size(); ++i) {
+                auto image_view = device->createImageViewUnique(
+                    vk::ImageViewCreateInfo{}
+                        .setImage(images[i])
+                        .setViewType(vk::ImageViewType::e2D)
+                        .setSubresourceRange(vk::ImageSubresourceRange{}
+                                                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                                 .setBaseMipLevel(0)
+                                                 .setLevelCount(1)
+                                                 .setBaseArrayLayer(0)
+                                                 .setLayerCount(1))
+                        .setFormat(surface_format.surfaceFormat.format));
+                per_frames[i].swapchain_image_view = std::move(image_view);
+            }
+        }
+
+        //----------------------------------------------------------------------
+        // Pipelines
+
+        //----------------------------------------------------------------------
+        // Command pools.
+        // one per frame in flight per queue family.
+
+        for (auto &per_frame : per_frames) {
+            for (uint32_t qi = 0; qi < to_uint32(Queue::ELEM_COUNT); ++qi) {
+                Queue q = static_cast<Queue>(qi);
+                uint32_t fi = queues.get_family_index(q);
+                if (fi >= per_frame.command_pools.size()) { per_frame.command_pools.resize(fi + 1); }
+                if (!per_frame.command_pools[fi]) {
+                    per_frame.command_pools[fi] =
+                        device->createCommandPoolUnique(vk::CommandPoolCreateInfo{}.setQueueFamilyIndex(fi));
+                }
+            }
+        }
 
         //----------------------------------------------------------------------
         // Render loop
@@ -256,7 +307,15 @@ int main()
         });
 
         uint64_t global_frame = 0;
-        while (!glfwWindowShouldClose(glfw_window)) { glfwPollEvents(); }
+        while (!glfwWindowShouldClose(glfw_window)) {
+            uint32_t mod_frame = static_cast<uint32_t>(global_frame % NUM_FRAMES_IN_FLIGHT);
+
+            glfwPollEvents();
+            ++global_frame;
+        }
+
+        per_frames = {};
+
     } catch (vk::SystemError &err) {
         std::cerr << "vk::SystemError: " << err.what() << "\n";
         exit(-1);

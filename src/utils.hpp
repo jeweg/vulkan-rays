@@ -1,8 +1,12 @@
 #pragma once
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include "vulkan/vulkan.hpp"
+#include "build_info.hpp"
 #include <iostream>
+#include <fstream>
 #include <cstdlib>
+#include <iterator>
+#include <vector>
 
 
 template <typename T>
@@ -45,4 +49,16 @@ auto choose_best(const Container &candidates, WeightFunctor f)
         ++iter;
     }
     return best_one;
+}
+
+
+inline vk::UniqueShaderModule load_shader(vk::Device device, std::string_view path)
+{
+    std::ifstream input(path.data(), std::ios::binary);
+    std::vector<unsigned char> contents(std::istreambuf_iterator<char>(input.rdbuf()), {});
+
+    auto sm = device.createShaderModuleUnique(vk::ShaderModuleCreateInfo{}
+                                                  .setCodeSize(contents.size() / 4)
+                                                  .setPCode(reinterpret_cast<const uint32_t *>(contents.data())));
+    return std::move(sm);
 }
