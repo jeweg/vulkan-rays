@@ -1,0 +1,9 @@
+[submodule "3rd-party/volk"]
+	path = 3rd-party/volk
+	url = https://github.com/zeux/volk
+[submodule "3rd-party/glfw"]
+	path = 3rd-party/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "3rd-party/vma"]
+	path = 3rd-party/vma
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
