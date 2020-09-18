@@ -47,16 +47,63 @@ struct SurfaceDestroyer
 
 
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
+
 struct PerFrame
 {
-    std::vector<vk::UniqueCommandPool> command_pools;
+    vk::UniqueCommandPool command_pool;
+    vk::UniqueCommandBuffer command_buffer;
+
     vk::UniqueImageView swapchain_image_view;
+    vk::UniqueSemaphore image_available_for_rendering_sema;
+    vk::UniqueSemaphore rendering_finished_sema;
+    vk::UniqueFence finished_fence;
+
+    vk::Device device;
+    vk::SwapchainKHR swapchain;
+    Queues queues;
+
+    PerFrame(vk::Device device, vk::SwapchainKHR swapchain, Queues queues) :
+        device(device), swapchain(swapchain), queues(queues)
+    {
+        image_available_for_rendering_sema = device.createSemaphoreUnique(vk::SemaphoreCreateInfo{});
+        rendering_finished_sema = device.createSemaphoreUnique(vk::SemaphoreCreateInfo{});
+        finished_fence = device.createFenceUnique(vk::FenceCreateInfo{}.setFlags(vk::FenceCreateFlagBits::eSignaled));
+    }
+
+    // Much simplified workflow for the graphics piipeline.
+    // Just one command buffer per frame submit.
+
+    vk::CommandBuffer begin_frame()
+    {
+        device.waitForFences({finished_fence.get()}, true, -1);
+        device.resetFences({finished_fence.get()});
+        ASSUME(!command_buffer);
+        device.resetCommandPool(command_pool.get(), {});
+
+        auto command_buffers = device.allocateCommandBuffersUnique(
+            vk::CommandBufferAllocateInfo{}.setCommandPool(command_pool.get()).setCommandBufferCount(1));
+        ASSUME(command_buffers.size() == 1);
+        command_buffer = std::move(command_buffers.front());
+        return command_buffer.get();
+    }
 
 
-    vk::CommandPool get_cmd_pool(Queue q) { return command_pools[to_uint32(q)].get(); }
+    void end_frame()
+    {
+        // Acquire image for rendering
+        device.acquireNextImageKHR(swapchain, -1, image_available_for_rendering_sema.get(), {});
+
+        auto submit_info =
+            vk::SubmitInfo{}
+                .setCommandBuffers(command_buffer.get())
+                .setWaitSemaphores(image_available_for_rendering_sema.get())
+                .setSignalSemaphores(rendering_finished_sema.get())
+                .setWaitDstStageMask(vk::PipelineStageFlags(vk::PipelineStageFlagBits::eColorAttachmentOutput));
+        queues.get_queue(Queue::Graphics).submit({submit_info}, finished_fence.get());
+    }
 };
-
-std::array<PerFrame, NUM_FRAMES_IN_FLIGHT> per_frames;
+// std::array<PerFrame, NUM_FRAMES_IN_FLIGHT> per_frames;
+std::vector<PerFrame> per_frames;
 
 
 int main()
@@ -259,6 +306,15 @@ int main()
         };
 
         vk::UniqueSwapchainKHR swapchain = create_swap_chain(1200, 800);
+
+        //----------------------------------------------------------------------
+        // Per-frame resources
+        // one per frame in flight per queue family.
+
+        for (size_t i = 0; i < NUM_FRAMES_IN_FLIGHT; ++i) {
+            per_frames.emplace_back(device.get(), swapchain.get(), queues);
+        }
+
         {
             std::vector<vk::Image> images = device->getSwapchainImagesKHR(swapchain.get());
 
@@ -279,13 +335,8 @@ int main()
             }
         }
 
-        //----------------------------------------------------------------------
-        // Pipelines
-
-        //----------------------------------------------------------------------
-        // Command pools.
-        // one per frame in flight per queue family.
-
+#if 0
+        TODO
         for (auto &per_frame : per_frames) {
             for (uint32_t qi = 0; qi < to_uint32(Queue::ELEM_COUNT); ++qi) {
                 Queue q = static_cast<Queue>(qi);
@@ -297,6 +348,10 @@ int main()
                 }
             }
         }
+#endif
+
+        //----------------------------------------------------------------------
+        // Pipelines
 
         //----------------------------------------------------------------------
         // Render loop
@@ -306,15 +361,22 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         });
 
-        uint64_t global_frame = 0;
+        uint64_t global_frame_number = 0;
         while (!glfwWindowShouldClose(glfw_window)) {
-            uint32_t mod_frame = static_cast<uint32_t>(global_frame % NUM_FRAMES_IN_FLIGHT);
+            uint32_t mod_frame_number = static_cast<uint32_t>(global_frame_number % NUM_FRAMES_IN_FLIGHT);
 
             glfwPollEvents();
-            ++global_frame;
-        }
+            ++global_frame_number;
 
-        per_frames = {};
+
+            PerFrame &this_frame = per_frames[mod_frame_number];
+            this_frame.begin_frame();
+
+            this_frame.end_frame();
+        }
+        device->waitIdle();
+
+        per_frames.clear();
 
     } catch (vk::SystemError &err) {
         std::cerr << "vk::SystemError: " << err.what() << "\n";
