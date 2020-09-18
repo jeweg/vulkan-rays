@@ -7,3 +7,6 @@
 [submodule "3rd-party/vma"]
 	path = 3rd-party/vma
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "3rd-party/debugbreak"]
+	path = 3rd-party/debugbreak
+	url = https://github.com/scottt/debugbreak.git

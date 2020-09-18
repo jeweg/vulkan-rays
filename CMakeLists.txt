@@ -70,4 +70,8 @@ add_executable(vulkan-rays
 )
 target_compile_features(vulkan-rays PRIVATE cxx_std_17)
 target_link_libraries(vulkan-rays PRIVATE Vulkan::Vulkan glfw)
-target_include_directories(vulkan-rays PRIVATE 3rd-party/vma/src "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(vulkan-rays PRIVATE
+	3rd-party/vma/src 
+	3rd-party/debugbreak 
+	"${CMAKE_CURRENT_BINARY_DIR}"
+)
