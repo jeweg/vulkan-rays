@@ -394,7 +394,8 @@ int main()
         //----------------------------------------------------------------------
         // Create offscreen image
 
-        std::cerr << format_properties_to_string(phys_device, vk::Format::eR8G8B8A8Uint) << "\n";
+        constexpr vk::Format IMAGE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
+        std::cerr << format_properties_to_string(phys_device, IMAGE_FORMAT) << "\n";
 
         uint32_t family_indices[] = {queues.get_family_index(Queue::Graphics), queues.get_family_index(Queue::Compute)};
         VkImageCreateInfo img_ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -404,7 +405,7 @@ int main()
         img_ci.extent.depth = 1;
         img_ci.mipLevels = 1;
         img_ci.arrayLayers = 1;
-        img_ci.format = VK_FORMAT_R8G8B8A8_UINT;
+        img_ci.format = static_cast<VkFormat>(IMAGE_FORMAT); // VK_FORMAT_R8G8B8A8_UINT;
         img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         img_ci.usage = 0; // VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
@@ -420,6 +421,20 @@ int main()
         img_ci.usage = VK_IMAGE_USAGE_STORAGE_BIT;
 
         VmaImage image = VmaImage(vma_allocator, VMA_MEMORY_USAGE_GPU_ONLY, img_ci);
+
+        vk::UniqueImageView image_view =
+            device->createImageViewUnique(vk::ImageViewCreateInfo{}
+                                              .setImage(image)
+                                              .setFormat(IMAGE_FORMAT /*vk::Format::eR8G8B8A8Uint*/)
+                                              .setViewType(vk::ImageViewType::e2D)
+                                              .setSubresourceRange(vk::ImageSubresourceRange{}
+                                                                       .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                                                       .setBaseMipLevel(0)
+                                                                       .setLayerCount(1)
+                                                                       .setLevelCount(1)
+                                                                       .setBaseArrayLayer(0)));
+
+        vk::UniqueSampler image_sampler = device->createSamplerUnique(vk::SamplerCreateInfo{});
 
         //----------------------------------------------------------------------
         // Graphics pipeline
@@ -529,13 +544,18 @@ int main()
         //----------------------------------------------------------------------
         // Compute pipeline
 
-        vk::UniquePipeline compute_pipeline;
+        struct
+        {
+            vk::UniquePipeline pipeline;
+            vk::UniquePipelineLayout layout;
+            vk::UniqueDescriptorSetLayout dsl;
+        } compute_pipeline;
 
         {
             vk::UniqueShaderModule compute_shader =
                 load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/compute.comp.spirv");
 
-            vk::UniqueDescriptorSetLayout dsl =
+            compute_pipeline.dsl =
                 device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
                     vk::DescriptorSetLayoutBinding{}
                         .setBinding(0)
@@ -543,19 +563,49 @@ int main()
                         .setDescriptorCount(1)
                         .setStageFlags(vk::ShaderStageFlagBits::eCompute)));
 
-            vk::UniquePipelineLayout pipeline_layout =
-                device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{}.setSetLayouts(dsl.get()));
+            compute_pipeline.layout = device->createPipelineLayoutUnique(
+                vk::PipelineLayoutCreateInfo{}.setSetLayouts(compute_pipeline.dsl.get()));
 
-            compute_pipeline = device->createComputePipelineUnique(
+            compute_pipeline.pipeline = device->createComputePipelineUnique(
                 pipeline_cache.get(),
                 vk::ComputePipelineCreateInfo{}
                     .setStage(vk::PipelineShaderStageCreateInfo{}
                                   .setStage(vk::ShaderStageFlagBits::eCompute)
                                   .setModule(compute_shader.get())
                                   .setPName("main"))
-                    .setLayout(pipeline_layout.get()));
+                    .setLayout(compute_pipeline.layout.get()));
         }
 
+
+        vk::UniqueDescriptorPool dpool =
+            device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(
+                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100)));
+
+        std::vector<vk::DescriptorSet> compute_ds1 =
+            device->allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                               .setDescriptorPool(dpool.get())
+                                               .setDescriptorSetCount(1)
+                                               .setSetLayouts(compute_pipeline.dsl.get()));
+        /*
+        std::vector<vk::UniqueDescriptorSet> compute_ds1 =
+            device->allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo{}
+                                                     .setDescriptorPool(dpool.get())
+                                                     .setDescriptorSetCount(1)
+                                                     .setSetLayouts(compute_pipeline.dsl.get()));
+                                                     */
+
+        device->updateDescriptorSets(
+            vk::WriteDescriptorSet{}
+                .setDstSet(compute_ds1.front())
+                .setDescriptorType(vk::DescriptorType::eStorageImage)
+                .setDstBinding(0)
+                .setDescriptorCount(1)
+                .setImageInfo(vk::DescriptorImageInfo{}
+                                  .setImageLayout(vk::ImageLayout::eGeneral)
+                                  .setImageView(image_view.get())
+                                  .setSampler(image_sampler.get())),
+            {});
+        // vk::CopyDescriptorSet{});
 
         //----------------------------------------------------------------------
         // Render loop
@@ -575,6 +625,8 @@ int main()
             PerFrame &this_frame = per_frames[mod_frame_number];
             auto cmd_buffer = this_frame.begin_frame();
 
+
+            // Graphics dispatch
             cmd_buffer.beginRenderPass(
                 vk::RenderPassBeginInfo{}
                     .setRenderPass(render_pass.get())
@@ -587,10 +639,50 @@ int main()
                                                                .setLayers(1)
                                                                .setAttachments(this_frame.swapchain_image_view.get()))),
                 vk::SubpassContents::eInline);
-
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
             cmd_buffer.draw(3, 1, 0, 0);
             cmd_buffer.endRenderPass();
+
+
+            // Compute dispatch
+            /*
+            VULKAN_HPP_INLINE void CommandBuffer::pipelineBarrier(
+                VULKAN_HPP_NAMESPACE::PipelineStageFlags srcStageMask,
+                VULKAN_HPP_NAMESPACE::PipelineStageFlags dstStageMask,
+                VULKAN_HPP_NAMESPACE::DependencyFlags dependencyFlags,
+                ArrayProxy<const VULKAN_HPP_NAMESPACE::MemoryBarrier> const &memoryBarriers,
+                ArrayProxy<const VULKAN_HPP_NAMESPACE::BufferMemoryBarrier> const &bufferMemoryBarriers,
+                ArrayProxy<const VULKAN_HPP_NAMESPACE::ImageMemoryBarrier> const &imageMemoryBarriers,
+                Dispatch const &d) const VULKAN_HPP_NOEXCEPT
+                */
+
+            cmd_buffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTopOfPipe,
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::DependencyFlagBits::eByRegion,
+                {},
+                {},
+                vk::ImageMemoryBarrier{}
+                    .setImage(image)
+                    .setOldLayout(vk::ImageLayout::eUndefined)
+                    .setNewLayout(vk::ImageLayout::eGeneral)
+                    .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
+                    .setSubresourceRange(vk::ImageSubresourceRange{}
+                                             .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                             .setBaseMipLevel(0)
+                                             .setLayerCount(1)
+                                             .setLevelCount(1)
+                                             .setBaseArrayLayer(0))
+                //.setDstQueueFamilyIndex(queues.get_family_index(Queue::Compute))
+                //.setSrcQueueFamilyIndex(queues.get_family_index(Queue::Compute))
+
+            );
+
+            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
+            cmd_buffer.bindDescriptorSets(
+                vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds1.front(), {});
+            cmd_buffer.dispatch(1, 1, 1);
+
 
             this_frame.end_frame();
             ++global_frame_number;
