@@ -16,6 +16,11 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <string_view>
 #include <iostream>
 
+// We avoid swapchain resizing issues here by
+// using a fixed size.
+constexpr int W = 1200;
+constexpr int H = 800;
+
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -50,6 +55,37 @@ struct SurfaceDestroyer
 };
 
 
+struct VmaImage
+{
+    VmaImage(VmaAllocator vma_allocator, VmaMemoryUsage usage, const VkImageCreateInfo &ci) :
+        vma_allocator(vma_allocator)
+    {
+        VmaAllocationCreateInfo alloc_info = {};
+        alloc_info.usage = usage;
+        ASSUME(vmaCreateImage(vma_allocator, &ci, &alloc_info, &image, &vma_allocation, nullptr) == VK_SUCCESS);
+    }
+
+    ~VmaImage() noexcept { vmaDestroyImage(vma_allocator, image, vma_allocation); }
+
+    operator vk::Image() const { return image; }
+    explicit operator VkImage() const { return image; }
+
+    VmaAllocator vma_allocator = VK_NULL_HANDLE;
+    VmaAllocation vma_allocation = VK_NULL_HANDLE;
+    VkImage image;
+};
+
+
+struct VmaAllocatorGuard
+{
+    VmaAllocatorGuard(const VmaAllocatorCreateInfo &ci) { vmaCreateAllocator(&ci, &vma_allocator); }
+    ~VmaAllocatorGuard() { vmaDestroyAllocator(vma_allocator); }
+    operator VmaAllocator() const { return vma_allocator; }
+
+    VmaAllocator vma_allocator = VK_NULL_HANDLE;
+};
+
+
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
 
 struct PerFrame
@@ -64,12 +100,11 @@ struct PerFrame
 
     vk::Device device;
     vk::SwapchainKHR swapchain;
-    uint32_t swapchain_image_index;
 
     Queues queues;
 
-    PerFrame(vk::Device device, vk::SwapchainKHR swapchain, Queues queues, uint32_t swapchain_image_index) :
-        device(device), swapchain(swapchain), queues(queues), swapchain_image_index(swapchain_image_index)
+    PerFrame(vk::Device device, vk::SwapchainKHR swapchain, Queues queues) :
+        device(device), swapchain(swapchain), queues(queues)
     {
         command_pool = device.createCommandPoolUnique(vk::CommandPoolCreateInfo{}
                                                           .setQueueFamilyIndex(queues.get_family_index(Queue::Graphics))
@@ -182,6 +217,7 @@ int main()
         ASSUME(glfwVulkanSupported());
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
         GLFWwindow *glfw_window = glfwCreateWindow(1200, 800, "Example", nullptr, nullptr);
         if (!glfw_window) {
             glfwTerminate();
@@ -247,8 +283,7 @@ int main()
         allocator_info.device = device.get();
         allocator_info.pVulkanFunctions = &vma_funcs;
         allocator_info.flags |= VMA_ALLOCATOR_CREATE_KHR_DEDICATED_ALLOCATION_BIT;
-        VmaAllocator vma_allocator = VK_NULL_HANDLE;
-        vmaCreateAllocator(&allocator_info, &vma_allocator);
+        VmaAllocatorGuard vma_allocator(allocator_info);
 
         //----------------------------------------------------------------------
         // Surface format and swap chain
@@ -282,7 +317,8 @@ int main()
             } else {
                 extent = caps.currentExtent;
             }
-            // ASSUME(VK_TRUE == phys_device.getSurfaceSupportKHR(queues.get_family_index(Queue::Present), surface));
+            // ASSUME(VK_TRUE == phys_device.getSurfaceSupportKHR(queues.get_family_index(Queue::Present),
+            // surface));
 
             auto present_mode = choose_best(phys_device.getSurfacePresentModesKHR(surface), [](vk::PresentModeKHR pm) {
                 switch (pm) {
@@ -333,7 +369,7 @@ int main()
         // one per frame in flight per queue family.
 
         for (size_t i = 0; i < NUM_FRAMES_IN_FLIGHT; ++i) {
-            per_frames.emplace_back(device.get(), swapchain.get(), queues, i);
+            per_frames.emplace_back(device.get(), swapchain.get(), queues);
         }
 
         {
@@ -356,10 +392,37 @@ int main()
         }
 
         //----------------------------------------------------------------------
-        // Pipelines
+        // Create offscreen image
 
-        constexpr int w = 1200;
-        constexpr int h = 800;
+        std::cerr << format_properties_to_string(phys_device, vk::Format::eR8G8B8A8Uint) << "\n";
+
+        uint32_t family_indices[] = {queues.get_family_index(Queue::Graphics), queues.get_family_index(Queue::Compute)};
+        VkImageCreateInfo img_ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        img_ci.imageType = VK_IMAGE_TYPE_2D;
+        img_ci.extent.width = W;
+        img_ci.extent.height = H;
+        img_ci.extent.depth = 1;
+        img_ci.mipLevels = 1;
+        img_ci.arrayLayers = 1;
+        img_ci.format = VK_FORMAT_R8G8B8A8_UINT;
+        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        img_ci.usage = 0; // VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        if (queues.get_family_index(Queue::Graphics) != queues.get_family_index(Queue::Compute)) {
+            img_ci.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            img_ci.queueFamilyIndexCount = 2;
+        } else {
+            img_ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            img_ci.queueFamilyIndexCount = 1;
+        }
+        img_ci.pQueueFamilyIndices = family_indices;
+        img_ci.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+
+        VmaImage image = VmaImage(vma_allocator, VMA_MEMORY_USAGE_GPU_ONLY, img_ci);
+
+        //----------------------------------------------------------------------
+        // Graphics Pipelines
 
         vk::UniqueShaderModule vertex_shader =
             load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
@@ -408,8 +471,8 @@ int main()
                                         .setPrimitiveRestartEnable(false);
         auto dyn_state = vk::PipelineDynamicStateCreateInfo{};
         auto viewport_state = vk::PipelineViewportStateCreateInfo{}
-                                  .setViewports(vk::Viewport(0, 0, w, h, 0, 1))
-                                  .setScissors(vk::Rect2D({0, 0}, {w, h}));
+                                  .setViewports(vk::Viewport(0, 0, W, H, 0, 1))
+                                  .setScissors(vk::Rect2D({0, 0}, {W, H}));
         auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
                                        .setPolygonMode(vk::PolygonMode::eFill)
                                        .setCullMode(vk::CullModeFlagBits::eNone)
@@ -470,7 +533,7 @@ int main()
             uint32_t mod_frame_number = static_cast<uint32_t>(global_frame_number % NUM_FRAMES_IN_FLIGHT);
             glfwPollEvents();
 
-            std::cerr << "frame " << global_frame_number << " (mod: " << mod_frame_number << ")\n";
+            // std::cerr << "frame " << global_frame_number << " (mod: " << mod_frame_number << ")\n";
 
             PerFrame &this_frame = per_frames[mod_frame_number];
             auto cmd_buffer = this_frame.begin_frame();
@@ -478,12 +541,12 @@ int main()
             cmd_buffer.beginRenderPass(
                 vk::RenderPassBeginInfo{}
                     .setRenderPass(render_pass.get())
-                    .setRenderArea(vk::Rect2D({0, 0}, {w, h}))
+                    .setRenderArea(vk::Rect2D({0, 0}, {W, H}))
                     .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 0.7, 0, 1})))
                     .setFramebuffer(fb_cache.get_or_create(vk::FramebufferCreateInfo{}
                                                                .setRenderPass(render_pass.get())
-                                                               .setWidth(w)
-                                                               .setHeight(h)
+                                                               .setWidth(W)
+                                                               .setHeight(H)
                                                                .setLayers(1)
                                                                .setAttachments(this_frame.swapchain_image_view.get()))),
                 vk::SubpassContents::eInline);
@@ -498,7 +561,6 @@ int main()
         device->waitIdle();
 
         per_frames.clear();
-
     } catch (vk::SystemError &err) {
         std::cerr << "vk::SystemError: " << err.what() << "\n";
         exit(-1);
