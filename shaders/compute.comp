@@ -3,12 +3,14 @@
 // See https://community.khronos.org/t/drawing-to-image-from-compute-shader-example/7116/2
 layout ( binding = 0, rgba8 ) uniform writeonly image2D out_image;
 
+layout(push_constant) uniform PushConstantBlock { float delta_time; } PushConstants;
+
 void main()
 {
 	ivec2 img_size = imageSize(out_image);
 	for (int y = 0; y < img_size[1]; ++y) {
 		for (int x = 0; x < img_size[0]; ++x) {
-			imageStore(out_image, ivec2(x, y), vec4(vec3(0.5), 1));
+			imageStore(out_image, ivec2(x, y), vec4(vec3(sin(PushConstants.delta_time) * 0.5 + 0.5), 1));
 		}
 	}
 }
