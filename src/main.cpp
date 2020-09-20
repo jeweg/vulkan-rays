@@ -418,7 +418,7 @@ int main()
             img_ci.queueFamilyIndexCount = 1;
         }
         img_ci.pQueueFamilyIndices = family_indices;
-        img_ci.usage = VK_IMAGE_USAGE_STORAGE_BIT;
+        img_ci.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
         VmaImage image = VmaImage(vma_allocator, VMA_MEMORY_USAGE_GPU_ONLY, img_ci);
 
@@ -437,20 +437,45 @@ int main()
         vk::UniqueSampler image_sampler = device->createSamplerUnique(vk::SamplerCreateInfo{});
 
         //----------------------------------------------------------------------
-        // Graphics pipeline
+        // Shared pools and caches
 
         vk::UniquePipelineCache pipeline_cache = device->createPipelineCacheUnique(vk::PipelineCacheCreateInfo{});
 
-        vk::UniqueRenderPass render_pass;
-        vk::UniquePipeline graphics_pipeline;
+        FramebufferCache fb_cache(device.get(), 10);
+
+        vk::UniqueDescriptorPool descriptor_pool =
+            device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(
+                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100)));
+
+        //----------------------------------------------------------------------
+        // Graphics pipeline
+
+        struct
+        {
+            vk::UniquePipeline pipeline;
+            vk::UniquePipelineLayout layout;
+            vk::UniqueDescriptorSetLayout dsl;
+            vk::UniqueRenderPass render_pass;
+        } graphics_pipeline;
 
         {
+            graphics_pipeline.dsl =
+                device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
+                    vk::DescriptorSetLayoutBinding{}
+                        .setBinding(0)
+                        .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+                        .setDescriptorCount(1)
+                        .setStageFlags(vk::ShaderStageFlagBits::eFragment)));
+
+            graphics_pipeline.layout = device->createPipelineLayoutUnique(
+                vk::PipelineLayoutCreateInfo{}.setSetLayouts(graphics_pipeline.dsl.get()));
+
             vk::UniqueShaderModule vertex_shader =
                 load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
             vk::UniqueShaderModule fragment_shader =
                 load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/fs.frag.spirv");
 
-            render_pass = device->createRenderPassUnique(
+            graphics_pipeline.render_pass = device->createRenderPassUnique(
                 vk::RenderPassCreateInfo{}
                     .setAttachments(vk::AttachmentDescription{}
                                         .setFormat(surface_format.surfaceFormat.format)
@@ -520,14 +545,11 @@ int main()
                     vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
                     | vk::ColorComponentFlagBits::eA));
 
-            vk::UniquePipelineLayout pipeline_layout =
-                device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{});
-
-            graphics_pipeline = device->createGraphicsPipelineUnique(
+            graphics_pipeline.pipeline = device->createGraphicsPipelineUnique(
                 pipeline_cache.get(),
                 vk::GraphicsPipelineCreateInfo{}
-                    .setLayout(pipeline_layout.get())
-                    .setRenderPass(render_pass.get())
+                    .setLayout(graphics_pipeline.layout.get())
+                    .setRenderPass(graphics_pipeline.render_pass.get())
                     .setStages(shader_stages)
                     .setPVertexInputState(&vertex_input_state)
                     .setPInputAssemblyState(&input_assembly_state)
@@ -538,8 +560,23 @@ int main()
                     .setPDepthStencilState(&depth_stencil_state)
                     .setPColorBlendState(&color_blend_state));
         }
+        std::vector<vk::DescriptorSet> ds =
+            device->allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
+                                               .setDescriptorPool(descriptor_pool.get())
+                                               .setDescriptorSetCount(1)
+                                               .setSetLayouts(graphics_pipeline.dsl.get()));
+        device->updateDescriptorSets(
+            vk::WriteDescriptorSet{}
+                .setDstSet(ds.front())
+                .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+                .setDstBinding(0)
+                .setDescriptorCount(1)
+                .setImageInfo(vk::DescriptorImageInfo{}
+                                  .setImageLayout(vk::ImageLayout::eGeneral)
+                                  .setImageView(image_view.get())
+                                  .setSampler(image_sampler.get())),
+            {});
 
-        FramebufferCache fb_cache(device.get(), 10);
 
         //----------------------------------------------------------------------
         // Compute pipeline
@@ -576,27 +613,14 @@ int main()
                     .setLayout(compute_pipeline.layout.get()));
         }
 
-
-        vk::UniqueDescriptorPool dpool =
-            device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(
-                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100)));
-
-        std::vector<vk::DescriptorSet> compute_ds1 =
+        std::vector<vk::DescriptorSet> compute_ds =
             device->allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                               .setDescriptorPool(dpool.get())
+                                               .setDescriptorPool(descriptor_pool.get())
                                                .setDescriptorSetCount(1)
                                                .setSetLayouts(compute_pipeline.dsl.get()));
-        /*
-        std::vector<vk::UniqueDescriptorSet> compute_ds1 =
-            device->allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo{}
-                                                     .setDescriptorPool(dpool.get())
-                                                     .setDescriptorSetCount(1)
-                                                     .setSetLayouts(compute_pipeline.dsl.get()));
-                                                     */
-
         device->updateDescriptorSets(
             vk::WriteDescriptorSet{}
-                .setDstSet(compute_ds1.front())
+                .setDstSet(compute_ds.front())
                 .setDescriptorType(vk::DescriptorType::eStorageImage)
                 .setDstBinding(0)
                 .setDescriptorCount(1)
@@ -605,7 +629,6 @@ int main()
                                   .setImageView(image_view.get())
                                   .setSampler(image_sampler.get())),
             {});
-        // vk::CopyDescriptorSet{});
 
         //----------------------------------------------------------------------
         // Render loop
@@ -625,36 +648,7 @@ int main()
             PerFrame &this_frame = per_frames[mod_frame_number];
             auto cmd_buffer = this_frame.begin_frame();
 
-
-            // Graphics dispatch
-            cmd_buffer.beginRenderPass(
-                vk::RenderPassBeginInfo{}
-                    .setRenderPass(render_pass.get())
-                    .setRenderArea(vk::Rect2D({0, 0}, {W, H}))
-                    .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 0.7, 0, 1})))
-                    .setFramebuffer(fb_cache.get_or_create(vk::FramebufferCreateInfo{}
-                                                               .setRenderPass(render_pass.get())
-                                                               .setWidth(W)
-                                                               .setHeight(H)
-                                                               .setLayers(1)
-                                                               .setAttachments(this_frame.swapchain_image_view.get()))),
-                vk::SubpassContents::eInline);
-            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
-            cmd_buffer.draw(3, 1, 0, 0);
-            cmd_buffer.endRenderPass();
-
-
             // Compute dispatch
-            /*
-            VULKAN_HPP_INLINE void CommandBuffer::pipelineBarrier(
-                VULKAN_HPP_NAMESPACE::PipelineStageFlags srcStageMask,
-                VULKAN_HPP_NAMESPACE::PipelineStageFlags dstStageMask,
-                VULKAN_HPP_NAMESPACE::DependencyFlags dependencyFlags,
-                ArrayProxy<const VULKAN_HPP_NAMESPACE::MemoryBarrier> const &memoryBarriers,
-                ArrayProxy<const VULKAN_HPP_NAMESPACE::BufferMemoryBarrier> const &bufferMemoryBarriers,
-                ArrayProxy<const VULKAN_HPP_NAMESPACE::ImageMemoryBarrier> const &imageMemoryBarriers,
-                Dispatch const &d) const VULKAN_HPP_NOEXCEPT
-                */
 
             cmd_buffer.pipelineBarrier(
                 vk::PipelineStageFlagBits::eTopOfPipe,
@@ -672,16 +666,52 @@ int main()
                                              .setBaseMipLevel(0)
                                              .setLayerCount(1)
                                              .setLevelCount(1)
-                                             .setBaseArrayLayer(0))
-                //.setDstQueueFamilyIndex(queues.get_family_index(Queue::Compute))
-                //.setSrcQueueFamilyIndex(queues.get_family_index(Queue::Compute))
-
-            );
+                                             .setBaseArrayLayer(0)));
 
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
             cmd_buffer.bindDescriptorSets(
-                vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds1.front(), {});
+                vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
             cmd_buffer.dispatch(1, 1, 1);
+
+            // Graphics dispatch
+
+            cmd_buffer.pipelineBarrier(
+                vk::PipelineStageFlagBits::eComputeShader,
+                vk::PipelineStageFlagBits::eFragmentShader,
+                vk::DependencyFlagBits::eByRegion,
+                {},
+                {},
+                vk::ImageMemoryBarrier{}
+                    .setImage(image)
+                    .setOldLayout(vk::ImageLayout::eGeneral)
+                    .setNewLayout(vk::ImageLayout::eGeneral)
+                    .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+                    .setSubresourceRange(vk::ImageSubresourceRange{}
+                                             .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                             .setBaseMipLevel(0)
+                                             .setLayerCount(1)
+                                             .setLevelCount(1)
+                                             .setBaseArrayLayer(0)));
+
+            cmd_buffer.beginRenderPass(
+                vk::RenderPassBeginInfo{}
+                    .setRenderPass(graphics_pipeline.render_pass.get())
+                    .setRenderArea(vk::Rect2D({0, 0}, {W, H}))
+                    .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 0.7, 0, 1})))
+                    .setFramebuffer(fb_cache.get_or_create(vk::FramebufferCreateInfo{}
+                                                               .setRenderPass(graphics_pipeline.render_pass.get())
+                                                               .setWidth(W)
+                                                               .setHeight(H)
+                                                               .setLayers(1)
+                                                               .setAttachments(this_frame.swapchain_image_view.get()))),
+                vk::SubpassContents::eInline);
+            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.pipeline.get());
+            cmd_buffer.bindDescriptorSets(
+                vk::PipelineBindPoint::eGraphics, graphics_pipeline.layout.get(), 0, ds.front(), {});
+            cmd_buffer.draw(3, 1, 0, 0);
+            cmd_buffer.endRenderPass();
+
+            device->waitIdle();
 
 
             this_frame.end_frame();
