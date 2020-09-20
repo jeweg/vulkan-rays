@@ -422,103 +422,140 @@ int main()
         VmaImage image = VmaImage(vma_allocator, VMA_MEMORY_USAGE_GPU_ONLY, img_ci);
 
         //----------------------------------------------------------------------
-        // Graphics Pipelines
-
-        vk::UniqueShaderModule vertex_shader =
-            load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
-        vk::UniqueShaderModule fragment_shader =
-            load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/fs.frag.spirv");
+        // Graphics pipeline
 
         vk::UniquePipelineCache pipeline_cache = device->createPipelineCacheUnique(vk::PipelineCacheCreateInfo{});
 
-        vk::UniqueRenderPass render_pass = device->createRenderPassUnique(
-            vk::RenderPassCreateInfo{}
-                .setAttachments(vk::AttachmentDescription{}
-                                    .setFormat(surface_format.surfaceFormat.format)
-                                    .setSamples(vk::SampleCountFlagBits::e1)
-                                    .setLoadOp(vk::AttachmentLoadOp::eClear)
-                                    .setStoreOp(vk::AttachmentStoreOp::eStore)
-                                    .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
-                                    .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
-                                    .setInitialLayout(vk::ImageLayout::eUndefined)
-                                    .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
-                .setSubpasses(vk::SubpassDescription{}
-                                  .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
-                                  .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
-                                      vk::ImageLayout::eColorAttachmentOptimal)))
-                .setDependencies(
-                    vk::SubpassDependency{}
-                        .setSrcSubpass(VK_SUBPASS_EXTERNAL)
-                        .setDstSubpass(0)
-                        .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                        .setSrcAccessMask({})
-                        .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                        .setDstAccessMask(
-                            vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite)));
+        vk::UniqueRenderPass render_pass;
+        vk::UniquePipeline graphics_pipeline;
 
-        std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
-            vk::PipelineShaderStageCreateInfo{}
-                .setStage(vk::ShaderStageFlagBits::eVertex)
-                .setModule(vertex_shader.get())
-                .setPName("main"),
-            vk::PipelineShaderStageCreateInfo{}
-                .setStage(vk::ShaderStageFlagBits::eFragment)
-                .setModule(fragment_shader.get())
-                .setPName("main")};
-        auto vertex_input_state = vk::PipelineVertexInputStateCreateInfo{};
-        auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
-                                        .setTopology(vk::PrimitiveTopology::eTriangleList)
-                                        .setPrimitiveRestartEnable(false);
-        auto dyn_state = vk::PipelineDynamicStateCreateInfo{};
-        auto viewport_state = vk::PipelineViewportStateCreateInfo{}
-                                  .setViewports(vk::Viewport(0, 0, W, H, 0, 1))
-                                  .setScissors(vk::Rect2D({0, 0}, {W, H}));
-        auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
-                                       .setPolygonMode(vk::PolygonMode::eFill)
-                                       .setCullMode(vk::CullModeFlagBits::eNone)
-                                       .setFrontFace(vk::FrontFace::eClockwise)
-                                       .setDepthClampEnable(false)
-                                       .setRasterizerDiscardEnable(false)
-                                       .setDepthBiasEnable(false)
-                                       .setLineWidth(1.f);
-        auto multisample_state = vk::PipelineMultisampleStateCreateInfo{}
-                                     .setRasterizationSamples(vk::SampleCountFlagBits::e1)
-                                     .setSampleShadingEnable(false);
-        auto depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo{}
-                                       .setDepthTestEnable(true)
-                                       .setDepthWriteEnable(true)
-                                       .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
-                                       .setBack(vk::StencilOpState{}
-                                                    .setFailOp(vk::StencilOp::eKeep)
-                                                    .setPassOp(vk::StencilOp::eKeep)
-                                                    .setCompareOp(vk::CompareOp::eAlways))
-                                       .setFront(vk::StencilOpState{}
-                                                     .setFailOp(vk::StencilOp::eKeep)
-                                                     .setPassOp(vk::StencilOp::eKeep)
-                                                     .setCompareOp(vk::CompareOp::eAlways));
-        auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(
-            vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
-                vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
-                | vk::ColorComponentFlagBits::eA));
+        {
+            vk::UniqueShaderModule vertex_shader =
+                load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
+            vk::UniqueShaderModule fragment_shader =
+                load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/fs.frag.spirv");
 
-        vk::UniquePipelineLayout pipeline_layout = device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{});
+            render_pass = device->createRenderPassUnique(
+                vk::RenderPassCreateInfo{}
+                    .setAttachments(vk::AttachmentDescription{}
+                                        .setFormat(surface_format.surfaceFormat.format)
+                                        .setSamples(vk::SampleCountFlagBits::e1)
+                                        .setLoadOp(vk::AttachmentLoadOp::eClear)
+                                        .setStoreOp(vk::AttachmentStoreOp::eStore)
+                                        .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
+                                        .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+                                        .setInitialLayout(vk::ImageLayout::eUndefined)
+                                        .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
+                    .setSubpasses(vk::SubpassDescription{}
+                                      .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
+                                      .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
+                                          vk::ImageLayout::eColorAttachmentOptimal)))
+                    .setDependencies(
+                        vk::SubpassDependency{}
+                            .setSrcSubpass(VK_SUBPASS_EXTERNAL)
+                            .setDstSubpass(0)
+                            .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                            .setSrcAccessMask({})
+                            .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                            .setDstAccessMask(
+                                vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite)));
 
-        vk::UniquePipeline pipeline1 = device->createGraphicsPipelineUnique(
-            pipeline_cache.get(),
-            vk::GraphicsPipelineCreateInfo{}
-                .setLayout(pipeline_layout.get())
-                .setRenderPass(render_pass.get())
-                .setStages(shader_stages)
-                .setPVertexInputState(&vertex_input_state)
-                .setPInputAssemblyState(&input_assembly_state)
-                .setPDynamicState(&dyn_state)
-                .setPViewportState(&viewport_state)
-                .setPRasterizationState(&rasterization_state)
-                .setPMultisampleState(&multisample_state)
-                .setPDepthStencilState(&depth_stencil_state)
-                .setPColorBlendState(&color_blend_state));
+            std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
+                vk::PipelineShaderStageCreateInfo{}
+                    .setStage(vk::ShaderStageFlagBits::eVertex)
+                    .setModule(vertex_shader.get())
+                    .setPName("main"),
+                vk::PipelineShaderStageCreateInfo{}
+                    .setStage(vk::ShaderStageFlagBits::eFragment)
+                    .setModule(fragment_shader.get())
+                    .setPName("main")};
+            auto vertex_input_state = vk::PipelineVertexInputStateCreateInfo{};
+            auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
+                                            .setTopology(vk::PrimitiveTopology::eTriangleList)
+                                            .setPrimitiveRestartEnable(false);
+            auto dyn_state = vk::PipelineDynamicStateCreateInfo{};
+            auto viewport_state = vk::PipelineViewportStateCreateInfo{}
+                                      .setViewports(vk::Viewport(0, 0, W, H, 0, 1))
+                                      .setScissors(vk::Rect2D({0, 0}, {W, H}));
+            auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
+                                           .setPolygonMode(vk::PolygonMode::eFill)
+                                           .setCullMode(vk::CullModeFlagBits::eNone)
+                                           .setFrontFace(vk::FrontFace::eClockwise)
+                                           .setDepthClampEnable(false)
+                                           .setRasterizerDiscardEnable(false)
+                                           .setDepthBiasEnable(false)
+                                           .setLineWidth(1.f);
+            auto multisample_state = vk::PipelineMultisampleStateCreateInfo{}
+                                         .setRasterizationSamples(vk::SampleCountFlagBits::e1)
+                                         .setSampleShadingEnable(false);
+            auto depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo{}
+                                           .setDepthTestEnable(true)
+                                           .setDepthWriteEnable(true)
+                                           .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
+                                           .setBack(vk::StencilOpState{}
+                                                        .setFailOp(vk::StencilOp::eKeep)
+                                                        .setPassOp(vk::StencilOp::eKeep)
+                                                        .setCompareOp(vk::CompareOp::eAlways))
+                                           .setFront(vk::StencilOpState{}
+                                                         .setFailOp(vk::StencilOp::eKeep)
+                                                         .setPassOp(vk::StencilOp::eKeep)
+                                                         .setCompareOp(vk::CompareOp::eAlways));
+            auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(
+                vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
+                    vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+                    | vk::ColorComponentFlagBits::eA));
+
+            vk::UniquePipelineLayout pipeline_layout =
+                device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{});
+
+            graphics_pipeline = device->createGraphicsPipelineUnique(
+                pipeline_cache.get(),
+                vk::GraphicsPipelineCreateInfo{}
+                    .setLayout(pipeline_layout.get())
+                    .setRenderPass(render_pass.get())
+                    .setStages(shader_stages)
+                    .setPVertexInputState(&vertex_input_state)
+                    .setPInputAssemblyState(&input_assembly_state)
+                    .setPDynamicState(&dyn_state)
+                    .setPViewportState(&viewport_state)
+                    .setPRasterizationState(&rasterization_state)
+                    .setPMultisampleState(&multisample_state)
+                    .setPDepthStencilState(&depth_stencil_state)
+                    .setPColorBlendState(&color_blend_state));
+        }
 
         FramebufferCache fb_cache(device.get(), 10);
+
+        //----------------------------------------------------------------------
+        // Compute pipeline
+
+        vk::UniquePipeline compute_pipeline;
+
+        {
+            vk::UniqueShaderModule compute_shader =
+                load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/compute.comp.spirv");
+
+            vk::UniqueDescriptorSetLayout dsl =
+                device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
+                    vk::DescriptorSetLayoutBinding{}
+                        .setBinding(0)
+                        .setDescriptorType(vk::DescriptorType::eStorageImage)
+                        .setDescriptorCount(1)
+                        .setStageFlags(vk::ShaderStageFlagBits::eCompute)));
+
+            vk::UniquePipelineLayout pipeline_layout =
+                device->createPipelineLayoutUnique(vk::PipelineLayoutCreateInfo{}.setSetLayouts(dsl.get()));
+
+            compute_pipeline = device->createComputePipelineUnique(
+                pipeline_cache.get(),
+                vk::ComputePipelineCreateInfo{}
+                    .setStage(vk::PipelineShaderStageCreateInfo{}
+                                  .setStage(vk::ShaderStageFlagBits::eCompute)
+                                  .setModule(compute_shader.get())
+                                  .setPName("main"))
+                    .setLayout(pipeline_layout.get()));
+        }
+
 
         //----------------------------------------------------------------------
         // Render loop
@@ -551,7 +588,7 @@ int main()
                                                                .setAttachments(this_frame.swapchain_image_view.get()))),
                 vk::SubpassContents::eInline);
 
-            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline1.get());
+            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.get());
             cmd_buffer.draw(3, 1, 0, 0);
             cmd_buffer.endRenderPass();
 

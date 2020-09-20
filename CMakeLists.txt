@@ -14,6 +14,7 @@ set(sources
 set(glsl_sources
 	shaders/vs.vert
 	shaders/fs.frag
+	shaders/compute.comp
 )
 
 set(spirv_files)
