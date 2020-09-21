@@ -41,6 +41,7 @@ void make_primary_ray(vec2 offset, out Ray out_ray)
 	out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -2);
 }
 
+/*
 bool hit_sphere(vec3 center, float radius, Ray ray)
 {
 	vec3 oc = ray.origin - center;
@@ -50,11 +51,26 @@ bool hit_sphere(vec3 center, float radius, Ray ray)
 	float discriminant = b*b - 4*a*c;
 	return (discriminant > 0);
 }
+*/
+
+float hit_sphere(vec3 center, float radius, Ray r)
+{
+	vec3 oc = r.origin - center;
+	float a = dot(r.dir, r.dir);
+	float b = 2 * dot(oc, r.dir);
+	float c = dot(oc, oc) - radius*radius;
+	float discriminant = b*b - 4*a*c;
+	if (discriminant < 0) {
+		return -1;
+	} else {
+		return (-b - sqrt(discriminant)) / (2 * a);
+	}
+}
 
 vec3 get_world_color(Ray ray)
 {
 	vec3 color = vec3(1.0);
-	if (hit_sphere(vec3(0, 0, -2), 0.5, ray)) {
+	if (hit_sphere(vec3(0, 0, -2), 0.5, ray) >= 0) {
 		color = vec3(1, 0.7, 0);
 	}
 	return color;

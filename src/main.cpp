@@ -423,7 +423,7 @@ int main()
         // Create offscreen image
 
         constexpr vk::Format IMAGE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
-        std::cerr << format_properties_to_string(phys_device, IMAGE_FORMAT) << "\n";
+        // std::cerr << format_properties_to_string(phys_device, IMAGE_FORMAT) << "\n";
 
         uint32_t family_indices[] = {queues.get_family_index(Queue::Graphics), queues.get_family_index(Queue::Compute)};
         VkImageCreateInfo img_ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
