@@ -693,9 +693,8 @@ int main()
 
             struct Sphere
             {
-                glm::vec4 center;
+                glm::vec4 center_and_radius;
                 glm::vec4 albedo;
-                float radius;
             };
 
             struct UBO
@@ -783,12 +782,23 @@ int main()
         // Define world
 
         {
-            // Sphere sphere = Sphere(vec4(0, 0, -2, 1), vec4(1, 0.7, 0, 1), 0.5);
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
-
-            sphere.albedo = glm::vec4(1, 0.7, 0, 1);
-            sphere.center = glm::vec4(0, 0, -2, 1);
-            sphere.radius = 0.5;
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
+                sphere.center_and_radius = glm::vec4(0, 0, -2, 0.5);
+                sphere.albedo = glm::vec4(1, 0.7, 0, 1);
+            }
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
+                sphere.center_and_radius = glm::vec4(-1, -1, -2, 1.0);
+                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+            }
+            /*
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
+                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.center_and_radius = glm::vec4(0, -2, -2, 0.5);
+            }
+            */
         }
 
         //----------------------------------------------------------------------

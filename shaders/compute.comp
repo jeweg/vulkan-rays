@@ -8,9 +8,8 @@ layout(binding = 0, rgba8) uniform image2D inout_image;
 
 struct Sphere
 {
-	vec4 center;
+	vec4 center_and_radius;
 	vec4 albedo;
-	float radius;
 };
 
 layout(binding = 1) uniform UniformBufferObject
@@ -39,32 +38,26 @@ vec2 eval_r2_sequence(uint sample_index)
 	return fract(float(sample_index) * vec2(1.0 / PLASTIC_CONSTANT, 1.0 / (PLASTIC_CONSTANT * PLASTIC_CONSTANT)));
 }
 
+// Creates a primary ray through this local workgroup's pixel,
+// with the specified offset within the pixel. Offset coefficents should be in interval [0, 1],
+// 0.5 is the pixel center.
 void make_primary_ray(vec2 offset, out Ray out_ray)
 {
 	// These could come from push constants or a uniform buffer.
 	const vec2 screen_dims = vec2(imageSize(inout_image));
 	const float eye_dist = 2;
 
+	// The image plane will go from -1 to +1 in the x direction.
+	// The y direction is proportional to x, scaled with the aspect ratio.
 	const vec2 this_pixel = vec2(gl_WorkGroupID.x, gl_WorkGroupID.y) - vec2(0.5) + offset;
 	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
 	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
 
 	out_ray.origin = vec3(0);
-	out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -2);
+	out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -eye_dist);
 }
 
-/*
-bool hit_sphere(vec3 center, float radius, Ray ray)
-{
-	vec3 oc = ray.origin - center;
-	float a = dot(ray.dir, ray.dir);
-	float b = 2 * dot(oc, ray.dir);
-	float c = dot(oc, oc) - radius * radius;
-	float discriminant = b*b - 4*a*c;
-	return (discriminant > 0);
-}
-*/
-
+// Thank you, Peter Shirley.
 float hit_sphere_shape(vec3 center, float radius, Ray r)
 {
 	vec3 oc = r.origin - center;
@@ -81,15 +74,19 @@ float hit_sphere_shape(vec3 center, float radius, Ray r)
 
 struct HitRecord
 {
-	vec4 albedo;
+	vec3 pt;
+	vec3 normal;
+	vec3 albedo;
 	float distance;
 };
 
-bool test_sphere(Sphere sphere, Ray r, out HitRecord out_hit_record)
+bool test_sphere(Sphere sphere, Ray ray, out HitRecord out_hit_record)
 {
-	float d = hit_sphere_shape(sphere.center.xyz, sphere.radius, r);
+	float d = hit_sphere_shape(sphere.center_and_radius.xyz, sphere.center_and_radius.w, ray);
 	if (d >= 0) {
-		out_hit_record = HitRecord(sphere.albedo, d);
+		vec3 pt = ray.origin + d * ray.dir;
+		vec3 normal = normalize(pt - sphere.center_and_radius.xyz);
+		out_hit_record = HitRecord(pt, normal, sphere.albedo.rgb, d);
 		return true;
 	}
 	return false;
@@ -97,22 +94,41 @@ bool test_sphere(Sphere sphere, Ray r, out HitRecord out_hit_record)
 
 vec3 get_world_color(Ray ray)
 {
-	vec3 color = vec3(1.0);
+	HitRecord closest_hit = HitRecord(vec3(0), vec3(0), vec3(0.3, 0.3, 0.3), 999999);
 
-	//Sphere sphere = Sphere(vec4(0, 0, -2, 1), vec4(1, 0.7, 0, 1), 0.5);
+	for (int i = 0; i < 2; ++i) {
+		HitRecord this_hit;
+		if (test_sphere(ubo.spheres[i], ray, this_hit) && this_hit.distance < closest_hit.distance) {
+			closest_hit.pt = this_hit.pt;
+			closest_hit.normal = this_hit.normal;
+			closest_hit.albedo = this_hit.albedo;
+			closest_hit.distance = this_hit.distance;
+		}
+	}
+	vec3 color = closest_hit.albedo.rgb;
+	if (closest_hit.distance < 9999) {
 
-	Sphere sphere = ubo.spheres[0];
+		// Send a shadow ray for now.
 
-	HitRecord hit;
-	if (test_sphere(sphere, ray, hit)) {
-		color = hit.albedo.rgb;
+		vec3 light_pt = vec3(-10, -2, -2);
+		light_pt.xy += (eval_r2_sequence(PushConstants.progression_index) - vec2(0.5)) * vec2(0.3);
+
+
+		Ray new_ray = Ray(closest_hit.pt + closest_hit.normal * 0.0001, light_pt - closest_hit.pt);
+		HitRecord dummy;
+		bool occluded = false;
+		for (int j = 0; j < 2; ++j) {
+			if (test_sphere(ubo.spheres[j], new_ray, dummy)) {
+				occluded = true;
+				break;
+			}
+		}
+		if (occluded) {
+			color.rgb *= 0.5;
+		}
+
 	}
 
-	/*
-	if (hit_sphere_shape(vec3(0, 0, -2), 0.5, ray) >= 0) {
-		color = vec3(1, 0.7, 0);
-	}
-	*/
 	return color;
 }
 
@@ -124,7 +140,10 @@ void main()
 
 	Ray ray;
 
-	vec2 offset = eval_r2_sequence(PushConstants.progression_index);
+	const uint progression_index = PushConstants.progression_index;
+	//const uint progression_index = 0;
+
+	vec2 offset = eval_r2_sequence(progression_index);
 	//make_primary_ray(vec2(0, 0), ray);
 	make_primary_ray(offset, ray);
 
@@ -134,7 +153,7 @@ void main()
 	// Branchless condition: if we just started a progression, we treat
 	// the accumulation count as 0. This will overwrite the full result with our
 	// color, saving us an image clear.
-	float accum_count = accum_color.a * float(PushConstants.progression_index > 0);
+	float accum_count = accum_color.a * float(progression_index > 0);
 
 	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
 	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
