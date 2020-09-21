@@ -7,7 +7,12 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "build_info.hpp"
 #include "debugbreak.h"
 
+#define GLM_FORCE_SWIZZLE
+#include "glm/vec2.hpp"
 #include "glm/vec4.hpp"
+#include "glm/mat4x4.hpp"
+#include "glm/gtc/matrix_transform.hpp"
+#include "glm/gtx/rotate_vector.hpp"
 
 #define GLFW_INCLUDE_NONE
 #include "GLFW/glfw3.h"
@@ -18,6 +23,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <string_view>
 #include <iostream>
 #include <chrono>
+#include <optional>
 
 // We avoid swapchain resizing issues here by
 // using a fixed size.
@@ -179,6 +185,61 @@ void RunSingleTimeCommands(vk::Device device, const Queues &queues, std::functio
     auto submit_info = vk::SubmitInfo{}.setCommandBuffers(command_buffers.front().get());
     queues.get_queue(Queue::Graphics).submit({submit_info}, {});
     device.waitIdle();
+}
+
+bool g_mouse_dragging = false;
+glm::vec2 g_mouse_pos;
+
+class MouseDragger
+{
+public:
+    bool is_dragging() const { return _is_dragging; }
+    bool has_delta() const { return is_dragging() && _latest_pos.has_value(); }
+
+    glm::vec2 get_delta() const
+    {
+        ASSUME(has_delta());
+        glm::vec2 delta(0);
+        if (_last_reported_pos) { delta = _latest_pos.value() - _last_reported_pos.value(); }
+        _last_reported_pos = _latest_pos;
+        return delta;
+    }
+
+    void start_dragging()
+    {
+        if (!_is_dragging) {
+            _is_dragging = true;
+            _latest_pos.reset();
+            _last_reported_pos.reset();
+        }
+    }
+    void stop_dragging() { _is_dragging = false; }
+    void update(double xpos, double ypos)
+    {
+        if (_is_dragging) { _latest_pos.emplace(xpos, ypos); }
+    }
+
+private:
+    bool _is_dragging = false;
+    mutable std::optional<glm::vec2> _last_reported_pos;
+    std::optional<glm::vec2> _latest_pos;
+};
+
+MouseDragger g_left_mouse_dragger;
+MouseDragger g_right_mouse_dragger;
+
+static void cursor_position_callback(GLFWwindow *window, double xpos, double ypos)
+{
+    g_left_mouse_dragger.update(xpos, ypos);
+    g_right_mouse_dragger.update(xpos, ypos);
+}
+
+static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
+{
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) { g_left_mouse_dragger.start_dragging(); }
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) { g_right_mouse_dragger.start_dragging(); }
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) { g_left_mouse_dragger.stop_dragging(); }
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) { g_right_mouse_dragger.stop_dragging(); }
 }
 
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
@@ -683,13 +744,22 @@ int main()
             vk::UniquePipelineLayout layout;
             vk::UniqueDescriptorSetLayout dsl;
 
-            // TODO: this seems to work, but I'm a bit surprised it does.
-            // Shouldn't I have to seriously worry about alignment here?
+            // TODO: there's still something wrong here.
+            // If I move the view_transform to the end of the struct
+            // declaration, it doesn't work.
+            // Here I attempt to pad everything to 16-byte boundaries for compatibility
+            // with GLSL, but apparently this isn't enough.
+            // The pragma doesn't make a difference.
+            //#pragma pack(push, 1)
             struct PushConstants
             {
+                glm::mat4 view_to_world_transform = glm::mat4(1);
                 uint32_t progression_index = 0;
+                uint32_t dummy1[3];
                 float delta_time = 0.f;
+                uint32_t dummy2[3];
             } push_constants;
+            //#pragma pack(pop)
 
             struct Sphere
             {
@@ -732,6 +802,8 @@ int main()
             compute_pipeline.dsl =
                 device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
                     std::initializer_list<vk::DescriptorSetLayoutBinding>{dslb_0, dslb_1}));
+
+            auto foo = sizeof(ComputePipeline::PushConstants);
 
             compute_pipeline.layout = device->createPipelineLayoutUnique(
                 vk::PipelineLayoutCreateInfo{}
@@ -784,12 +856,12 @@ int main()
         {
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
-                sphere.center_and_radius = glm::vec4(0, 0, -2, 0.5);
+                sphere.center_and_radius = glm::vec4(0, 0, 0, 0.5);
                 sphere.albedo = glm::vec4(1, 0.7, 0, 1);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
-                sphere.center_and_radius = glm::vec4(-1, -1, -2, 1.0);
+                sphere.center_and_radius = glm::vec4(-1, -1, 0, 1.0);
                 sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
             }
             /*
@@ -809,11 +881,19 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         });
 
+        glfwSetCursorPosCallback(glfw_window, &cursor_position_callback);
+        glfwSetMouseButtonCallback(glfw_window, &mouse_button_callback);
+
+        // The camera state
+        float eye_angle_h = 0;
+        float eye_angle_v = 0;
+        float eye_dist = 7;
 
         uint64_t global_frame_number = 0;
         std::chrono::high_resolution_clock clock;
         auto start_time = std::chrono::high_resolution_clock::now();
         uint32_t progression_index = 0;
+        glm::mat4 last_rendered_view_transform;
 
 
         while (!glfwWindowShouldClose(glfw_window)) {
@@ -850,12 +930,43 @@ int main()
 
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
 
-
+            //----------------------------------------------------------------------
             // Update push constants
+            {
+                auto &m = compute_pipeline.push_constants.view_to_world_transform;
+
+                if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02; }
+                eye_dist = std::min(eye_dist, 20.f);
+                eye_dist = std::max(eye_dist, 1.f);
+
+                if (g_left_mouse_dragger.has_delta()) {
+                    auto delta = g_left_mouse_dragger.get_delta();
+                    eye_angle_h += delta.x * 0.009;
+                    eye_angle_v += delta.y * 0.009;
+                }
+
+                constexpr float PI_OVER_2 = 1.57079632679f;
+                eye_angle_v = std::min(eye_angle_v, PI_OVER_2 * 0.95f);
+                eye_angle_v = std::max(eye_angle_v, -PI_OVER_2 * 0.95f);
+
+                glm::vec3 eye(0, 0, eye_dist);
+                eye = glm::rotateX(eye, eye_angle_v);
+                eye = glm::rotateY(eye, eye_angle_h);
+                compute_pipeline.push_constants.view_to_world_transform =
+                    glm::inverse(glm::lookAt(glm::vec3(eye), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0)));
+
+                if (last_rendered_view_transform != compute_pipeline.push_constants.view_to_world_transform) {
+                    // Progression must start anew.
+                    progression_index = 0;
+                }
+                last_rendered_view_transform = compute_pipeline.push_constants.view_to_world_transform;
+            }
             compute_pipeline.push_constants.delta_time = delta_time_s;
             compute_pipeline.push_constants.progression_index = progression_index;
             cmd_buffer.pushConstants<ComputePipeline::PushConstants>(
                 compute_pipeline.layout.get(), vk::ShaderStageFlagBits::eCompute, 0, compute_pipeline.push_constants);
+
+            //----------------------------------------------------------------------
 
             cmd_buffer.bindDescriptorSets(
                 vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
