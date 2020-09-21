@@ -769,7 +769,7 @@ int main()
 
             struct UBO
             {
-                std::array<Sphere, 4> spheres;
+                std::array<Sphere, 6> spheres;
             };
             UBO *ubo_data = nullptr;
             VmaBuffer ubo;
@@ -856,21 +856,34 @@ int main()
         {
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
-                sphere.center_and_radius = glm::vec4(0, 0, 0, 0.5);
+                sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
                 sphere.albedo = glm::vec4(1, 0.7, 0, 1);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
-                sphere.center_and_radius = glm::vec4(-1, -1, 0, 1.0);
+                sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
                 sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
             }
-            /*
             {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
+                sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
                 sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
-                sphere.center_and_radius = glm::vec4(0, -2, -2, 0.5);
             }
-            */
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
+                sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
+                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+            }
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
+                sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
+                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+            }
+            {
+                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
+                sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
+                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+            }
         }
 
         //----------------------------------------------------------------------
