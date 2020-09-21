@@ -13,8 +13,16 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
 
+#if 0
+#    include "imgui.h"
+#    include "imgui_impl_glfw.h"
+#    include "imgui_impl_vulkan.h"
+#    include "imgui.h"
+#endif
+
 #include <string_view>
 #include <iostream>
+#include <chrono>
 
 // We avoid swapchain resizing issues here by
 // using a fixed size.
@@ -85,6 +93,26 @@ struct VmaAllocatorGuard
     VmaAllocator vma_allocator = VK_NULL_HANDLE;
 };
 
+vk::UniqueCommandPool g_one_shot_graphics_command_pool;
+
+// TODO: combine device, queues, command pools into one context object.
+// We tend to need these together too much and they all hinge on the vk::Device anyway.
+void RunSingleTimeCommands(vk::Device device, const Queues &queues, std::function<void(vk::CommandBuffer)> inner_body)
+{
+    auto command_buffers =
+        device.allocateCommandBuffersUnique(vk::CommandBufferAllocateInfo{}
+                                                .setCommandPool(g_one_shot_graphics_command_pool.get())
+                                                .setCommandBufferCount(1));
+    ASSUME(command_buffers.size() == 1);
+    command_buffers.front()->begin(
+        vk::CommandBufferBeginInfo{}.setFlags(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+
+    inner_body(command_buffers.front().get());
+
+    auto submit_info = vk::SubmitInfo{}.setCommandBuffers(command_buffers.front().get());
+    queues.get_queue(Queue::Graphics).submit({submit_info}, {});
+    device.waitIdle();
+}
 
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
 
@@ -439,6 +467,12 @@ int main()
         //----------------------------------------------------------------------
         // Shared pools and caches
 
+        g_one_shot_graphics_command_pool = device->createCommandPoolUnique(
+            vk::CommandPoolCreateInfo{}
+                .setQueueFamilyIndex(queues.get_family_index(Queue::Graphics))
+                .setFlags(
+                    vk::CommandPoolCreateFlagBits::eTransient | vk::CommandPoolCreateFlagBits::eResetCommandBuffer));
+
         vk::UniquePipelineCache pipeline_cache = device->createPipelineCacheUnique(vk::PipelineCacheCreateInfo{});
 
         FramebufferCache fb_cache(device.get(), 10);
@@ -486,6 +520,7 @@ int main()
                                         .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
                                         .setInitialLayout(vk::ImageLayout::eUndefined)
                                         .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
+                    //.setFinalLayout(vk::ImageLayout::eColorAttachmentOptimal))
                     .setSubpasses(vk::SubpassDescription{}
                                       .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
                                       .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
@@ -601,7 +636,12 @@ int main()
                         .setStageFlags(vk::ShaderStageFlagBits::eCompute)));
 
             compute_pipeline.layout = device->createPipelineLayoutUnique(
-                vk::PipelineLayoutCreateInfo{}.setSetLayouts(compute_pipeline.dsl.get()));
+                vk::PipelineLayoutCreateInfo{}
+                    .setPushConstantRanges(vk::PushConstantRange{}
+                                               .setOffset(0)
+                                               .setSize(sizeof(float))
+                                               .setStageFlags(vk::ShaderStageFlagBits::eCompute))
+                    .setSetLayouts(compute_pipeline.dsl.get()));
 
             compute_pipeline.pipeline = device->createComputePipelineUnique(
                 pipeline_cache.get(),
@@ -630,6 +670,66 @@ int main()
                                   .setSampler(image_sampler.get())),
             {});
 
+
+#if 0
+        //----------------------------------------------------------------------
+        // Setup Dear ImGui
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO &io = ImGui::GetIO();
+        (void)io;
+        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+        // Setup Dear ImGui style
+        ImGui::StyleColorsDark();
+        // ImGui::StyleColorsClassic();
+
+        vk::UniqueRenderPass imgui_render_pass = device->createRenderPassUnique(
+            vk::RenderPassCreateInfo{}
+                .setAttachments(vk::AttachmentDescription{}
+                                    .setFormat(surface_format.surfaceFormat.format)
+                                    .setSamples(vk::SampleCountFlagBits::e1)
+                                    .setLoadOp(vk::AttachmentLoadOp::eLoad)
+                                    .setStoreOp(vk::AttachmentStoreOp::eStore)
+                                    .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
+                                    .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+                                    .setInitialLayout(vk::ImageLayout::eColorAttachmentOptimal)
+                                    .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
+                .setSubpasses(vk::SubpassDescription{}
+                                  .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
+                                  .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
+                                      vk::ImageLayout::eColorAttachmentOptimal)))
+                .setDependencies(vk::SubpassDependency{}
+                                     .setSrcSubpass(VK_SUBPASS_EXTERNAL)
+                                     .setDstSubpass(0)
+                                     .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                                     .setSrcAccessMask({})
+                                     .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                                     .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)));
+
+        // Setup Platform/Renderer bindings
+        ImGui_ImplGlfw_InitForVulkan(glfw_window, true);
+        ImGui_ImplVulkan_InitInfo init_info = {0};
+        init_info.Instance = instance.get();
+        init_info.PhysicalDevice = phys_device;
+        init_info.Device = device.get();
+        init_info.QueueFamily = queues.get_family_index(Queue::Graphics);
+        init_info.Queue = queues.get_queue(Queue::Graphics);
+        init_info.PipelineCache = pipeline_cache.get();
+        init_info.DescriptorPool = descriptor_pool.get();
+        init_info.MinImageCount = NUM_FRAMES_IN_FLIGHT;
+        init_info.ImageCount = NUM_FRAMES_IN_FLIGHT;
+        init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+        init_info.CheckVkResultFn = check_vk_result;
+        init_info.Allocator = nullptr;
+        ImGui_ImplVulkan_Init(&init_info, imgui_render_pass.get());
+
+        RunSingleTimeCommands(
+            device.get(), queues, [](vk::CommandBuffer cmds) { ImGui_ImplVulkan_CreateFontsTexture(cmds); });
+#endif
+
         //----------------------------------------------------------------------
         // Render loop
 
@@ -638,10 +738,33 @@ int main()
             glfwSetWindowShouldClose(window, GLFW_TRUE);
         });
 
+
         uint64_t global_frame_number = 0;
+        std::chrono::high_resolution_clock clock;
+        auto start_time = std::chrono::high_resolution_clock::now();
+
         while (!glfwWindowShouldClose(glfw_window)) {
             uint32_t mod_frame_number = static_cast<uint32_t>(global_frame_number % NUM_FRAMES_IN_FLIGHT);
+            auto this_time = std::chrono::high_resolution_clock::now();
+            uint64_t delta_time_mus =
+                std::chrono::duration_cast<std::chrono::microseconds>(this_time - start_time).count();
+            float delta_time_s = delta_time_mus / 1000000.0f;
+
             glfwPollEvents();
+
+#if 0
+            {
+                ImGui::Text("Hello, world %d", 123);
+                if (ImGui::Button("Save")) {
+                    // do stuff
+                }
+                char buf[100];
+                ImGui::InputText("string", buf, IM_ARRAYSIZE(buf));
+                float f;
+                ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
+            }
+#endif
+
 
             // std::cerr << "frame " << global_frame_number << " (mod: " << mod_frame_number << ")\n";
 
@@ -669,9 +792,12 @@ int main()
                                              .setBaseArrayLayer(0)));
 
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
+            cmd_buffer.pushConstants<float>(
+                compute_pipeline.layout.get(), vk::ShaderStageFlagBits::eCompute, 0, delta_time_s);
+
             cmd_buffer.bindDescriptorSets(
                 vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
-            cmd_buffer.dispatch(1, 1, 1);
+            cmd_buffer.dispatch(W, H, 1);
 
             // Graphics dispatch
 
@@ -711,13 +837,13 @@ int main()
             cmd_buffer.draw(3, 1, 0, 0);
             cmd_buffer.endRenderPass();
 
-            device->waitIdle();
-
 
             this_frame.end_frame();
             ++global_frame_number;
         }
         device->waitIdle();
+
+        g_one_shot_graphics_command_pool.reset();
 
         per_frames.clear();
     } catch (vk::SystemError &err) {

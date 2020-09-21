@@ -10,3 +10,6 @@
 [submodule "3rd-party/debugbreak"]
 	path = 3rd-party/debugbreak
 	url = https://github.com/scottt/debugbreak.git
+[submodule "3rd-party/imgui"]
+	path = 3rd-party/imgui
+	url = https://github.com/ocornut/imgui.git
