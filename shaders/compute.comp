@@ -3,9 +3,14 @@
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 // See https://community.khronos.org/t/drawing-to-image-from-compute-shader-example/7116/2
-layout ( binding = 0, rgba8 ) uniform writeonly image2D out_image;
+//layout ( binding = 0, rgba8 ) uniform writeonly image2D out_image;
+layout ( binding = 0, rgba8 ) uniform image2D inout_image;
 
-layout(push_constant) uniform PushConstantBlock { float delta_time; } PushConstants;
+layout(push_constant) uniform PushConstantBlock 
+{
+	uint progression_index; 
+	float delta_time; 
+} PushConstants;
 
 struct Ray
 {
@@ -13,9 +18,27 @@ struct Ray
 	vec3 dir;
 };
 
-vec3 ray_at(Ray ray, float t) 
+// Evaluates the R2 sequence described in
+// http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+// Implementation inspired by https://www.pouet.net/topic.php?which=11501&page=1#c546333
+vec2 eval_r2_sequence(uint sample_index)
 {
-	return ray.origin + ray.dir * t;
+	const float PLASTIC_CONSTANT = 1.32471795f;
+	return fract(float(sample_index) * vec2(1.0 / PLASTIC_CONSTANT, 1.0 / (PLASTIC_CONSTANT * PLASTIC_CONSTANT)));
+}
+
+void make_primary_ray(vec2 offset, out Ray out_ray)
+{
+	// These could come from push constants or a uniform buffer.
+	const vec2 screen_dims = vec2(imageSize(inout_image));
+	const float eye_dist = 2;
+
+	const vec2 this_pixel = vec2(gl_WorkGroupID.x, gl_WorkGroupID.y) - vec2(0.5) + offset;
+	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
+	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
+
+	out_ray.origin = vec3(0);
+	out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -2);
 }
 
 bool hit_sphere(vec3 center, float radius, Ray ray)
@@ -28,42 +51,35 @@ bool hit_sphere(vec3 center, float radius, Ray ray)
 	return (discriminant > 0);
 }
 
-/*
-vec3 color(Ray ray) 
+vec3 get_world_color(Ray ray)
 {
-	if (hit_sphere(vec3(0, 0, -1), 0.5, ray)) {
-		return vec3(1, 0, 0);
+	vec3 color = vec3(1.0);
+	if (hit_sphere(vec3(0, 0, -2), 0.5, ray)) {
+		color = vec3(1, 0.7, 0);
 	}
-	vec3 dir_n = normalize(ray.dir);
-	float t = 0.5 * (dir_n.y + 1);
-	return mix(vec3(1), vec3(0.5, 0.7, 1.0), t);
+	return color;
 }
-*/
 
-void make_primary_ray(vec2 offset, out Ray out_ray)
-{
-	// These could come from push constants or a uniform buffer.
-	const vec2 screen_dims = vec2(imageSize(out_image));
-	const float eye_dist = 2;
-
-	const vec2 this_pixel = vec2(gl_WorkGroupID.x, gl_WorkGroupID.y) - vec2(0.5) + offset;
-	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
-	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
-
-	out_ray.origin = vec3(0);
-	out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -2);
-}
 
 void main()
 {
-	const ivec2 screen_size = imageSize(out_image);
+	const ivec2 screen_size = imageSize(inout_image);
 	const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
 
 	Ray ray;
-	make_primary_ray(vec2(0, 0), ray);
-	vec3 color = vec3(1.0);
-	if (hit_sphere(vec3(0, 0, -2), 0.5, ray)) {
-		color = vec3(0, 0, 0);
-	}
-	imageStore(out_image, this_pixel, vec4(color, 1));
+
+	vec2 offset = eval_r2_sequence(PushConstants.progression_index);
+	//make_primary_ray(vec2(0, 0), ray);
+	make_primary_ray(offset, ray);
+
+	vec3 color = get_world_color(ray);
+
+	vec4 accum_color = imageLoad(inout_image, this_pixel);
+	// Branchless condition: if we just started a progression, we treat
+	// the accumulation count as 0. This will overwrite the full result with our
+	// color, saving us an image clear.
+	float accum_count = accum_color.a * float(PushConstants.progression_index > 0);
+
+	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
+	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
 }

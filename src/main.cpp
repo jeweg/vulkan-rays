@@ -616,11 +616,19 @@ int main()
         //----------------------------------------------------------------------
         // Compute pipeline
 
-        struct
+        struct ComputePipeline
         {
             vk::UniquePipeline pipeline;
             vk::UniquePipelineLayout layout;
             vk::UniqueDescriptorSetLayout dsl;
+
+            // TODO: this seems to work, but I'm a bit surprised it does.
+            // Shouldn't I have to worry about alignment here?
+            struct PushConstants
+            {
+                uint32_t progression_index = 0;
+                float delta_time = 0.f;
+            } push_constants;
         } compute_pipeline;
 
         {
@@ -639,7 +647,7 @@ int main()
                 vk::PipelineLayoutCreateInfo{}
                     .setPushConstantRanges(vk::PushConstantRange{}
                                                .setOffset(0)
-                                               .setSize(sizeof(float))
+                                               .setSize(sizeof(ComputePipeline::PushConstants))
                                                .setStageFlags(vk::ShaderStageFlagBits::eCompute))
                     .setSetLayouts(compute_pipeline.dsl.get()));
 
@@ -742,6 +750,7 @@ int main()
         uint64_t global_frame_number = 0;
         std::chrono::high_resolution_clock clock;
         auto start_time = std::chrono::high_resolution_clock::now();
+        uint32_t progression_index = 0;
 
         while (!glfwWindowShouldClose(glfw_window)) {
             uint32_t mod_frame_number = static_cast<uint32_t>(global_frame_number % NUM_FRAMES_IN_FLIGHT);
@@ -792,8 +801,11 @@ int main()
                                              .setBaseArrayLayer(0)));
 
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
-            cmd_buffer.pushConstants<float>(
-                compute_pipeline.layout.get(), vk::ShaderStageFlagBits::eCompute, 0, delta_time_s);
+
+            compute_pipeline.push_constants.delta_time = delta_time_s;
+            compute_pipeline.push_constants.progression_index = progression_index;
+            cmd_buffer.pushConstants<ComputePipeline::PushConstants>(
+                compute_pipeline.layout.get(), vk::ShaderStageFlagBits::eCompute, 0, compute_pipeline.push_constants);
 
             cmd_buffer.bindDescriptorSets(
                 vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
@@ -823,7 +835,7 @@ int main()
                 vk::RenderPassBeginInfo{}
                     .setRenderPass(graphics_pipeline.render_pass.get())
                     .setRenderArea(vk::Rect2D({0, 0}, {W, H}))
-                    .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 0.7, 0, 1})))
+                    .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 0, 0, 0})))
                     .setFramebuffer(fb_cache.get_or_create(vk::FramebufferCreateInfo{}
                                                                .setRenderPass(graphics_pipeline.render_pass.get())
                                                                .setWidth(W)
@@ -840,6 +852,7 @@ int main()
 
             this_frame.end_frame();
             ++global_frame_number;
+            ++progression_index;
         }
         device->waitIdle();
 
