@@ -7,6 +7,8 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "build_info.hpp"
 #include "debugbreak.h"
 
+#include "glm/vec4.hpp"
+
 #define GLFW_INCLUDE_NONE
 #include "GLFW/glfw3.h"
 
@@ -65,22 +67,94 @@ struct SurfaceDestroyer
 
 struct VmaImage
 {
+    VmaImage() = default;
     VmaImage(VmaAllocator vma_allocator, VmaMemoryUsage usage, const VkImageCreateInfo &ci) :
         vma_allocator(vma_allocator)
     {
-        VmaAllocationCreateInfo alloc_info = {};
+        VmaAllocationCreateInfo alloc_info = {0};
         alloc_info.usage = usage;
         ASSUME(vmaCreateImage(vma_allocator, &ci, &alloc_info, &image, &vma_allocation, nullptr) == VK_SUCCESS);
     }
+    VmaImage(const VmaImage &) = delete;
+    VmaImage &operator=(const VmaImage &) = delete;
+    VmaImage(VmaImage &&other) noexcept :
+        vma_allocator(other.vma_allocator), vma_allocation(other.vma_allocation), image(other.image)
+    {
+        other.vma_allocation = VK_NULL_HANDLE;
+        other.image = VK_NULL_HANDLE;
+    }
+    VmaImage &operator=(VmaImage &&other) noexcept
+    {
+        vma_allocator = other.vma_allocator;
+        vma_allocation = other.vma_allocation;
+        image = other.image;
+        other.vma_allocation = VK_NULL_HANDLE;
+        other.image = VK_NULL_HANDLE;
+        return *this;
+    }
 
-    ~VmaImage() noexcept { vmaDestroyImage(vma_allocator, image, vma_allocation); }
+    ~VmaImage() noexcept
+    {
+        if (image) { vmaDestroyImage(vma_allocator, image, vma_allocation); }
+    }
 
     operator vk::Image() const { return image; }
     explicit operator VkImage() const { return image; }
 
     VmaAllocator vma_allocator = VK_NULL_HANDLE;
     VmaAllocation vma_allocation = VK_NULL_HANDLE;
-    VkImage image;
+    VkImage image = VK_NULL_HANDLE;
+};
+
+
+struct VmaBuffer
+{
+    VmaBuffer() = default;
+    VmaBuffer(
+        VmaAllocator vma_allocator, VmaMemoryUsage usage, bool persistently_mapped, const VkBufferCreateInfo &ci) :
+        vma_allocator(vma_allocator)
+    {
+        VmaAllocationCreateInfo alloc_ci = {0};
+        alloc_ci.usage = usage;
+        if (persistently_mapped) { alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT; }
+        ASSUME(vmaCreateBuffer(vma_allocator, &ci, &alloc_ci, &buffer, &vma_allocation, &alloc_info) == VK_SUCCESS);
+    }
+    VmaBuffer(const VmaBuffer &) = delete;
+    VmaBuffer &operator=(const VmaBuffer &) = delete;
+    VmaBuffer(VmaBuffer &&other) noexcept :
+        vma_allocator(other.vma_allocator),
+        vma_allocation(other.vma_allocation),
+        alloc_info(other.alloc_info),
+        buffer(other.buffer)
+    {
+        other.vma_allocation = VK_NULL_HANDLE;
+        other.buffer = VK_NULL_HANDLE;
+    }
+    VmaBuffer &operator=(VmaBuffer &&other) noexcept
+    {
+        vma_allocator = other.vma_allocator;
+        vma_allocation = other.vma_allocation;
+        alloc_info = other.alloc_info;
+        buffer = other.buffer;
+        other.vma_allocation = VK_NULL_HANDLE;
+        other.buffer = VK_NULL_HANDLE;
+        return *this;
+    }
+
+    void *mapped_data() { return alloc_info.pMappedData; }
+
+    ~VmaBuffer() noexcept
+    {
+        if (buffer) { vmaDestroyBuffer(vma_allocator, buffer, vma_allocation); }
+    }
+
+    operator vk::Buffer() const { return buffer; }
+    explicit operator VkBuffer() const { return buffer; }
+
+    VmaAllocator vma_allocator = VK_NULL_HANDLE;
+    VmaAllocation vma_allocation = VK_NULL_HANDLE;
+    VmaAllocationInfo alloc_info;
+    VkBuffer buffer = VK_NULL_HANDLE;
 };
 
 
@@ -425,30 +499,23 @@ int main()
         constexpr vk::Format IMAGE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
         // std::cerr << format_properties_to_string(phys_device, IMAGE_FORMAT) << "\n";
 
-        uint32_t family_indices[] = {queues.get_family_index(Queue::Graphics), queues.get_family_index(Queue::Compute)};
-        VkImageCreateInfo img_ci = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-        img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.extent.width = W;
-        img_ci.extent.height = H;
-        img_ci.extent.depth = 1;
-        img_ci.mipLevels = 1;
-        img_ci.arrayLayers = 1;
-        img_ci.format = static_cast<VkFormat>(IMAGE_FORMAT); // VK_FORMAT_R8G8B8A8_UINT;
-        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        img_ci.usage = 0; // VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
-        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-        if (queues.get_family_index(Queue::Graphics) != queues.get_family_index(Queue::Compute)) {
-            img_ci.sharingMode = VK_SHARING_MODE_CONCURRENT;
-            img_ci.queueFamilyIndexCount = 2;
-        } else {
-            img_ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            img_ci.queueFamilyIndexCount = 1;
-        }
-        img_ci.pQueueFamilyIndices = family_indices;
-        img_ci.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-
-        VmaImage image = VmaImage(vma_allocator, VMA_MEMORY_USAGE_GPU_ONLY, img_ci);
+        VmaImage image = VmaImage(
+            vma_allocator,
+            VMA_MEMORY_USAGE_GPU_ONLY,
+            vk::ImageCreateInfo{}
+                .setImageType(vk::ImageType::e2D)
+                .setExtent({W, H, 1})
+                .setMipLevels(1)
+                .setArrayLayers(1)
+                .setFormat(IMAGE_FORMAT)
+                .setTiling(vk::ImageTiling::eOptimal)
+                .setInitialLayout(vk::ImageLayout::eUndefined)
+                .setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
+                .setSamples(vk::SampleCountFlagBits::e1)
+                .setSharingMode(
+                    queues.get_family_index(Queue::Graphics) != queues.get_family_index(Queue::Compute) ?
+                        vk::SharingMode::eConcurrent :
+                        vk::SharingMode::eExclusive));
 
         vk::UniqueImageView image_view =
             device->createImageViewUnique(vk::ImageViewCreateInfo{}
@@ -477,9 +544,10 @@ int main()
 
         FramebufferCache fb_cache(device.get(), 10);
 
-        vk::UniqueDescriptorPool descriptor_pool =
-            device->createDescriptorPoolUnique(vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(
-                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100)));
+        vk::UniqueDescriptorPool descriptor_pool = device->createDescriptorPoolUnique(
+            vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(std::initializer_list<vk::DescriptorPoolSize>{
+                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100),
+                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(100)}));
 
         //----------------------------------------------------------------------
         // Graphics pipeline
@@ -623,25 +691,55 @@ int main()
             vk::UniqueDescriptorSetLayout dsl;
 
             // TODO: this seems to work, but I'm a bit surprised it does.
-            // Shouldn't I have to worry about alignment here?
+            // Shouldn't I have to seriously worry about alignment here?
             struct PushConstants
             {
                 uint32_t progression_index = 0;
                 float delta_time = 0.f;
             } push_constants;
+
+            struct Sphere
+            {
+                glm::vec4 center;
+                glm::vec4 albedo;
+                float radius;
+            };
+
+            struct UBO
+            {
+                std::array<Sphere, 4> spheres;
+            };
+            UBO *ubo_data = nullptr;
+            VmaBuffer ubo;
         } compute_pipeline;
 
         {
+            compute_pipeline.ubo = std::move(VmaBuffer(
+                vma_allocator,
+                VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_TO_GPU,
+                true, // Automatically persistently mapped
+                vk::BufferCreateInfo{}
+                    .setUsage(vk::BufferUsageFlagBits::eUniformBuffer)
+                    .setSharingMode(vk::SharingMode::eExclusive)
+                    .setSize(sizeof(ComputePipeline::UBO))));
+            compute_pipeline.ubo_data = static_cast<ComputePipeline::UBO *>(compute_pipeline.ubo.mapped_data());
+
             vk::UniqueShaderModule compute_shader =
                 load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/compute.comp.spirv");
 
+            auto dslb_0 = vk::DescriptorSetLayoutBinding{}
+                              .setBinding(0)
+                              .setDescriptorType(vk::DescriptorType::eStorageImage)
+                              .setDescriptorCount(1)
+                              .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+            auto dslb_1 = vk::DescriptorSetLayoutBinding{}
+                              .setBinding(1)
+                              .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+                              .setDescriptorCount(1)
+                              .setStageFlags(vk::ShaderStageFlagBits::eCompute);
             compute_pipeline.dsl =
                 device->createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
-                    vk::DescriptorSetLayoutBinding{}
-                        .setBinding(0)
-                        .setDescriptorType(vk::DescriptorType::eStorageImage)
-                        .setDescriptorCount(1)
-                        .setStageFlags(vk::ShaderStageFlagBits::eCompute)));
+                    std::initializer_list<vk::DescriptorSetLayoutBinding>{dslb_0, dslb_1}));
 
             compute_pipeline.layout = device->createPipelineLayoutUnique(
                 vk::PipelineLayoutCreateInfo{}
@@ -667,15 +765,25 @@ int main()
                                                .setDescriptorSetCount(1)
                                                .setSetLayouts(compute_pipeline.dsl.get()));
         device->updateDescriptorSets(
-            vk::WriteDescriptorSet{}
-                .setDstSet(compute_ds.front())
-                .setDescriptorType(vk::DescriptorType::eStorageImage)
-                .setDstBinding(0)
-                .setDescriptorCount(1)
-                .setImageInfo(vk::DescriptorImageInfo{}
-                                  .setImageLayout(vk::ImageLayout::eGeneral)
-                                  .setImageView(image_view.get())
-                                  .setSampler(image_sampler.get())),
+            std::initializer_list<vk::WriteDescriptorSet>{
+                vk::WriteDescriptorSet{}
+                    .setDstSet(compute_ds.front())
+                    .setDescriptorType(vk::DescriptorType::eStorageImage)
+                    .setDstBinding(0)
+                    .setDescriptorCount(1)
+                    .setImageInfo(vk::DescriptorImageInfo{}
+                                      .setImageLayout(vk::ImageLayout::eGeneral)
+                                      .setImageView(image_view.get())
+                                      .setSampler(image_sampler.get())),
+                vk::WriteDescriptorSet{}
+                    .setDstSet(compute_ds.front())
+                    .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+                    .setDstBinding(1)
+                    .setDescriptorCount(1)
+                    .setBufferInfo(vk::DescriptorBufferInfo{}
+                                       .setBuffer(compute_pipeline.ubo)
+                                       .setOffset(0)
+                                       .setRange(sizeof(ComputePipeline::UBO)))},
             {});
 
 
@@ -737,6 +845,21 @@ int main()
         RunSingleTimeCommands(
             device.get(), queues, [](vk::CommandBuffer cmds) { ImGui_ImplVulkan_CreateFontsTexture(cmds); });
 #endif
+        //----------------------------------------------------------------------
+        // Define world
+
+        // compute_pipeline.ubo.spheres...
+
+        // Update uniform buffer
+
+        {
+            // Sphere sphere = Sphere(vec4(0, 0, -2, 1), vec4(1, 0.7, 0, 1), 0.5);
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
+
+            sphere.albedo = glm::vec4(1, 0.7, 0, 1);
+            sphere.center = glm::vec4(0, 0, -2, 1);
+            sphere.radius = 0.5;
+        }
 
         //----------------------------------------------------------------------
         // Render loop
@@ -751,6 +874,7 @@ int main()
         std::chrono::high_resolution_clock clock;
         auto start_time = std::chrono::high_resolution_clock::now();
         uint32_t progression_index = 0;
+
 
         while (!glfwWindowShouldClose(glfw_window)) {
             uint32_t mod_frame_number = static_cast<uint32_t>(global_frame_number % NUM_FRAMES_IN_FLIGHT);
@@ -802,6 +926,8 @@ int main()
 
             cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
 
+
+            // Update push constants
             compute_pipeline.push_constants.delta_time = delta_time_s;
             compute_pipeline.push_constants.progression_index = progression_index;
             cmd_buffer.pushConstants<ComputePipeline::PushConstants>(

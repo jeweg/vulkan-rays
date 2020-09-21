@@ -92,6 +92,7 @@ target_link_libraries(vulkan-rays PRIVATE Vulkan::Vulkan glfw)
 target_include_directories(vulkan-rays PRIVATE
 	3rd-party/vma/src 
 	3rd-party/debugbreak 
+	3rd-party/glm 
 	#3rd-party/imgui
 	#3rd-party/imgui/examples
 	"${CMAKE_CURRENT_BINARY_DIR}"
