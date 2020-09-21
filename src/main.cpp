@@ -15,13 +15,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
 
-#if 0
-#    include "imgui.h"
-#    include "imgui_impl_glfw.h"
-#    include "imgui_impl_vulkan.h"
-#    include "imgui.h"
-#endif
-
 #include <string_view>
 #include <iostream>
 #include <chrono>
@@ -786,71 +779,8 @@ int main()
                                        .setRange(sizeof(ComputePipeline::UBO)))},
             {});
 
-
-#if 0
-        //----------------------------------------------------------------------
-        // Setup Dear ImGui
-
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO &io = ImGui::GetIO();
-        (void)io;
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-        // io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-        // Setup Dear ImGui style
-        ImGui::StyleColorsDark();
-        // ImGui::StyleColorsClassic();
-
-        vk::UniqueRenderPass imgui_render_pass = device->createRenderPassUnique(
-            vk::RenderPassCreateInfo{}
-                .setAttachments(vk::AttachmentDescription{}
-                                    .setFormat(surface_format.surfaceFormat.format)
-                                    .setSamples(vk::SampleCountFlagBits::e1)
-                                    .setLoadOp(vk::AttachmentLoadOp::eLoad)
-                                    .setStoreOp(vk::AttachmentStoreOp::eStore)
-                                    .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
-                                    .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
-                                    .setInitialLayout(vk::ImageLayout::eColorAttachmentOptimal)
-                                    .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
-                .setSubpasses(vk::SubpassDescription{}
-                                  .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
-                                  .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
-                                      vk::ImageLayout::eColorAttachmentOptimal)))
-                .setDependencies(vk::SubpassDependency{}
-                                     .setSrcSubpass(VK_SUBPASS_EXTERNAL)
-                                     .setDstSubpass(0)
-                                     .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                                     .setSrcAccessMask({})
-                                     .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                                     .setDstAccessMask(vk::AccessFlagBits::eColorAttachmentWrite)));
-
-        // Setup Platform/Renderer bindings
-        ImGui_ImplGlfw_InitForVulkan(glfw_window, true);
-        ImGui_ImplVulkan_InitInfo init_info = {0};
-        init_info.Instance = instance.get();
-        init_info.PhysicalDevice = phys_device;
-        init_info.Device = device.get();
-        init_info.QueueFamily = queues.get_family_index(Queue::Graphics);
-        init_info.Queue = queues.get_queue(Queue::Graphics);
-        init_info.PipelineCache = pipeline_cache.get();
-        init_info.DescriptorPool = descriptor_pool.get();
-        init_info.MinImageCount = NUM_FRAMES_IN_FLIGHT;
-        init_info.ImageCount = NUM_FRAMES_IN_FLIGHT;
-        init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-        init_info.CheckVkResultFn = check_vk_result;
-        init_info.Allocator = nullptr;
-        ImGui_ImplVulkan_Init(&init_info, imgui_render_pass.get());
-
-        RunSingleTimeCommands(
-            device.get(), queues, [](vk::CommandBuffer cmds) { ImGui_ImplVulkan_CreateFontsTexture(cmds); });
-#endif
         //----------------------------------------------------------------------
         // Define world
-
-        // compute_pipeline.ubo.spheres...
-
-        // Update uniform buffer
 
         {
             // Sphere sphere = Sphere(vec4(0, 0, -2, 1), vec4(1, 0.7, 0, 1), 0.5);
@@ -884,22 +814,6 @@ int main()
             float delta_time_s = delta_time_mus / 1000000.0f;
 
             glfwPollEvents();
-
-#if 0
-            {
-                ImGui::Text("Hello, world %d", 123);
-                if (ImGui::Button("Save")) {
-                    // do stuff
-                }
-                char buf[100];
-                ImGui::InputText("string", buf, IM_ARRAYSIZE(buf));
-                float f;
-                ImGui::SliderFloat("float", &f, 0.0f, 1.0f);
-            }
-#endif
-
-
-            // std::cerr << "frame " << global_frame_number << " (mod: " << mod_frame_number << ")\n";
 
             PerFrame &this_frame = per_frames[mod_frame_number];
             auto cmd_buffer = this_frame.begin_frame();
