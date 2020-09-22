@@ -41,11 +41,7 @@ void intersect_ray_with_world(Ray ray, out HitRecord hit_record)
 		test_sphere(ubo.spheres[i], ray, closest_dist, hr);
 		if (hr.dist < closest_dist) {
 			closest_dist = hr.dist;
-			hit_record.pt = hr.pt;
-			hit_record.normal = hr.normal;
-			hit_record.albedo = hr.albedo;
-			hit_record.emissive = hr.emissive;
-			hit_record.dist = hr.dist;
+			hit_record = hr;
 		}
 	}
 }
