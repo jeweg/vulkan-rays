@@ -24,14 +24,14 @@ struct Ray
 	vec3 dir;
 };
 
-
 struct HitRecord
 {
+	float dist;
 	vec3 pt;
 	vec3 normal;
-	vec3 albedo;
+	vec4 albedo_and_roughness;
 	vec3 emissive;
-	float dist;
+	vec4 specular_and_coefficient;
 };
 
 //----------------------------------------------------------------------

@@ -5,8 +5,9 @@
 struct Sphere
 {
 	vec4 center_and_radius;
-	vec4 albedo;
+	vec4 albedo_and_roughness;
 	vec4 emissive;
+	vec4 specular_and_coefficient;
 };
 
 layout(binding = 1) uniform UniformBufferObject
@@ -23,8 +24,9 @@ void test_sphere(Sphere sphere, Ray ray, float max_distance, out HitRecord out_h
 		vec3 pt = d * ray.dir + ray.origin;
 		out_hit_record.pt = pt;
 		out_hit_record.normal = normalize(pt - sphere.center_and_radius.xyz);
-		out_hit_record.albedo = sphere.albedo.rgb;
+		out_hit_record.albedo_and_roughness = sphere.albedo_and_roughness;
 		out_hit_record.emissive = sphere.emissive.rgb;
+		out_hit_record.specular_and_coefficient = sphere.specular_and_coefficient;
 		out_hit_record.dist = d;
 	} else {
 		out_hit_record.dist = INF_DIST;
@@ -61,20 +63,46 @@ vec3 compute_color_for_ray(Ray ray)
 		if (hit_record.dist == INF_DIST) {
 			// We hit the environment.
 			vec3 sky_color = mix(vec3(0, 0, 0.4), vec3(0.7, 0.7, 1), normalize(ray.dir).y * 0.5 + vec3(0.5));
-			result += sky_color * remaining_weight;
+			result += 0.2 * (sky_color * remaining_weight);
 			break;
 		}
 
 		result += hit_record.emissive * remaining_weight;
-		remaining_weight *= hit_record.albedo;
 
-		if (all(lessThan(remaining_weight, vec3(0.01)))) {
+		if (bounce + 1 == MAX_BOUNCE_COUNT) {
 			break;
 		}
 
-		// New ray for next iteration
+		// Make a new ray for the next iteration.
+
+		float do_specular = float(random_float_01(rng_state) <= hit_record.specular_and_coefficient.w);
+
+		vec3 ray_dir_diffuse = hit_record.normal + random_unit_vector(rng_state);
+		vec3 ray_dir_specular = reflect(ray.dir, hit_record.normal);
+
+		// Square roughness as usual. We might as well put it squared into the ubo, but let's
+		// keep it here for now for clarity.
+		float roughness = hit_record.albedo_and_roughness.w * hit_record.albedo_and_roughness.w;
+
+		ray_dir_specular = mix(ray_dir_specular, ray_dir_diffuse, roughness);
+
+		ray.dir = mix(ray_dir_diffuse, ray_dir_specular, do_specular);
 		ray.origin = hit_record.pt + hit_record.normal * RAY_START_BIAS;
-		ray.dir = normalize(hit_record.normal + random_unit_vector(rng_state));
+
+		remaining_weight *= mix(hit_record.albedo_and_roughness.xyz, hit_record.specular_and_coefficient.xyz, do_specular);
+
+		// Terminate rays early by playing russian roulette.
+		float russian_roulette_prob = max(remaining_weight.x, max(remaining_weight.y, remaining_weight.z));
+		if (russian_roulette_prob < random_float_01(rng_state)) {
+			break;
+		}
+		// Increase remaining weights to make up for the impact of terminated rays.
+		remaining_weight *= 1 / russian_roulette_prob;
+
+		// Terminate rays early when the maximum impact of further rays goes below a threshold.
+		if (all(lessThan(remaining_weight, vec3(0.005)))) {
+			break;
+		}
 	}
 	return result;
 }
