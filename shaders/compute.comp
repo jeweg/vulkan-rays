@@ -64,7 +64,7 @@ vec3 compute_color_for_ray(Ray ray)
 
 		if (hit_record.dist == INF_DIST) {
 			// We hit the environment.
-			vec3 sky_color = mix(vec3(0, 0, 0.4), vec3(0.7, 0.7, 1), ray.dir.y);
+			vec3 sky_color = mix(vec3(0, 0, 0.4), vec3(0.7, 0.7, 1), normalize(ray.dir).y * 0.5 + vec3(0.5));
 			result += sky_color * remaining_weight;
 			break;
 		}
@@ -82,9 +82,6 @@ vec3 compute_color_for_ray(Ray ray)
 	}
 	return result;
 }
-
-
-
 
 
 void main()
