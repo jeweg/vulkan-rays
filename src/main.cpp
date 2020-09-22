@@ -380,7 +380,7 @@ int main()
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-        GLFWwindow *glfw_window = glfwCreateWindow(1200, 800, "Example", nullptr, nullptr);
+        GLFWwindow *glfw_window = glfwCreateWindow(1200, 800, "Vulkan Rays", nullptr, nullptr);
         if (!glfw_window) {
             glfwTerminate();
             fatal("Failed to create window");
@@ -771,6 +771,7 @@ int main()
             {
                 glm::vec4 center_and_radius;
                 glm::vec4 albedo;
+                glm::vec4 emissive;
             };
 
             struct UBO
@@ -864,31 +865,38 @@ int main()
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
                 sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
                 sphere.albedo = glm::vec4(1, 0.7, 0, 1);
+                sphere.emissive = glm::vec4(3.0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
                 sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
-                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.albedo = glm::vec4(0.7, 0.3, 0.3, 1);
+                // sphere.albedo = glm::vec4(1);
+                sphere.emissive = glm::vec4(0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
                 sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
                 sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.emissive = glm::vec4(0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
                 sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
-                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.albedo = glm::vec4(0.86, 0, 0, 1);
+                sphere.emissive = glm::vec4(0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
                 sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
-                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.albedo = glm::vec4(0.8, 0.8, 0.8, 1);
+                sphere.emissive = glm::vec4(0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
                 sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
-                sphere.albedo = glm::vec4(0.1, 0.4, 0.8, 1);
+                sphere.albedo = glm::vec4(0.1, 0.7, 0.2, 1);
+                sphere.emissive = glm::vec4(0);
             }
         }
 

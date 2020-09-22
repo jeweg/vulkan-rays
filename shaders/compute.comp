@@ -1,15 +1,12 @@
 #version 450
 
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-
-// See https://community.khronos.org/t/drawing-to-image-from-compute-shader-example/7116/2
-//layout ( binding = 0, rgba8 ) uniform writeonly image2D out_image;
-layout(binding = 0, rgba8) uniform image2D inout_image;
+#include "common.comp"
 
 struct Sphere
 {
 	vec4 center_and_radius;
 	vec4 albedo;
+	vec4 emissive;
 };
 
 layout(binding = 1) uniform UniformBufferObject
@@ -17,190 +14,99 @@ layout(binding = 1) uniform UniformBufferObject
 	Sphere spheres[6];
 } ubo;
 
-layout(push_constant) uniform PushConstantBlock 
-{
-	mat4 view_to_world_transform;
-	uint progression_index; 
-	float delta_time; 
-} PushConstants;
 
-struct Ray
-{
-	vec3 origin;
-	vec3 dir;
-};
-
-// Evaluates the R2 sequence described in
-// http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
-// Implementation inspired by https://www.pouet.net/topic.php?which=11501&page=1#c546333
-vec2 eval_r2_sequence(uint sample_index)
-{
-	const float PLASTIC_CONSTANT = 1.32471795f;
-	return fract(float(sample_index) * vec2(1.0 / PLASTIC_CONSTANT, 1.0 / (PLASTIC_CONSTANT * PLASTIC_CONSTANT)));
-}
-
-// discontinuous pseudorandom uniformly distributed in [0, 1]^3 
-vec3 random3(vec3 c) {
-	float j = 4096.0*sin(dot(c,vec3(17.0, 59.4, 15.0)));
-	vec3 r;
-	r.z = fract(512.0*j);
-	j *= .125;
-	r.x = fract(512.0*j);
-	j *= .125;
-	r.y = fract(512.0*j);
-	return r;
-}
-
-
-// Creates a primary ray through this local workgroup's pixel,
-// with the specified offset within the pixel. Offset coefficents should be in interval [0, 1],
-// 0.5 is the pixel center.
-void make_primary_ray(vec2 offset, out Ray out_ray)
-{
-	// These could come from push constants or a uniform buffer.
-	const vec2 screen_dims = vec2(imageSize(inout_image));
-	const float eye_dist = 2;
-
-	// The image plane will go from -1 to +1 in the x direction.
-	// The y direction is proportional to x, scaled with the aspect ratio.
-	const vec2 this_pixel = vec2(gl_WorkGroupID.x, gl_WorkGroupID.y) - vec2(0.5) + offset;
-	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
-	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
-
-	//out_ray.origin = vec3(0);
-	//out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -eye_dist);
-	out_ray.origin = (PushConstants.view_to_world_transform * vec4(0, 0, 0, 1)).xyz;
-	out_ray.dir = (PushConstants.view_to_world_transform * vec4(center_pixel_dx, center_pixel_dy, -eye_dist, 0)).xyz;
-}
-
-
-// Thank you, Peter Shirley.
-float hit_sphere_shape(vec3 center, float radius, Ray r)
-{
-	vec3 oc = r.origin - center;
-	float a = dot(r.dir, r.dir);
-	float b = 2 * dot(oc, r.dir);
-	float c = dot(oc, oc) - radius*radius;
-	float discriminant = b*b - 4*a*c;
-	if (discriminant < 0) {
-		return -1;
-	} else {
-		return (-b - sqrt(discriminant)) / (2 * a);
-	}
-}
-
-struct HitRecord
-{
-	vec3 pt;
-	vec3 normal;
-	vec3 albedo;
-	float distance;
-};
-
-bool test_sphere(Sphere sphere, Ray ray, out HitRecord out_hit_record)
+// Only writes to out_hit_record if there's a hit. Always returns the hit distance or INF_DIST.
+void test_sphere(Sphere sphere, Ray ray, float max_distance, out HitRecord out_hit_record)
 {
 	float d = hit_sphere_shape(sphere.center_and_radius.xyz, sphere.center_and_radius.w, ray);
-	if (d >= 0) {
-		vec3 pt = ray.origin + d * ray.dir;
-		vec3 normal = normalize(pt - sphere.center_and_radius.xyz);
-		out_hit_record = HitRecord(pt, normal, sphere.albedo.rgb, d);
-		return true;
+	if (d >= 0 && d < max_distance) {
+		vec3 pt = d * ray.dir + ray.origin;
+		out_hit_record.pt = pt;
+		out_hit_record.normal = normalize(pt - sphere.center_and_radius.xyz);
+		out_hit_record.albedo = sphere.albedo.rgb;
+		out_hit_record.emissive = sphere.emissive.rgb;
+		out_hit_record.dist = d;
+	} else {
+		out_hit_record.dist = INF_DIST;
 	}
-	return false;
 }
 
-vec3 get_world_color(Ray ray)
+
+void intersect_ray_with_world(Ray ray, out HitRecord hit_record)
 {
-#if 0
-	// Uncomment to check for gamma correctness.
-	// The left half should have the same perceived brightness as the
-	// stipple pattern in the right half when squinting.
-	vec3 bg_color = vec3(0.5);
-	if (gl_WorkGroupID.x > 600) {
-		bool x_even = (gl_WorkGroupID.x & 1) != 0;
-		bool y_even = (gl_WorkGroupID.y & 1) != 0;
-		bg_color = x_even != y_even ? vec3(0) : vec3(1);
-	}
-#else
-	vec3 bg_color = vec3(0.4, 0.5, 0.8);
-#endif
-
-	HitRecord closest_hit = HitRecord(vec3(0), vec3(0), bg_color, 999999);
-
+	hit_record.dist = INF_DIST;
+	float closest_dist = INF_DIST;
 	for (int i = 0; i < 6; ++i) {
-		HitRecord this_hit;
-		if (test_sphere(ubo.spheres[i], ray, this_hit) && this_hit.distance < closest_hit.distance) {
-			closest_hit.pt = this_hit.pt;
-			closest_hit.normal = this_hit.normal;
-			//closest_hit.albedo = this_hit.normal * vec3(0.5) + vec3(0.5);
-			closest_hit.albedo = this_hit.albedo;
-			closest_hit.distance = this_hit.distance;
+		HitRecord hr;
+		test_sphere(ubo.spheres[i], ray, closest_dist, hr);
+		if (hr.dist < closest_dist) {
+			closest_dist = hr.dist;
+			hit_record.pt = hr.pt;
+			hit_record.normal = hr.normal;
+			hit_record.albedo = hr.albedo;
+			hit_record.emissive = hr.emissive;
+			hit_record.dist = hr.dist;
 		}
 	}
-	vec3 color = closest_hit.albedo.rgb;
-
-#if 1
-	if (closest_hit.distance < 9999) {
-
-		// Send a shadow ray for now.
-
-		vec3 light_pt = vec3(-10, 5, -2);
-		light_pt.xy += (eval_r2_sequence(PushConstants.progression_index) - vec2(0.5)) * vec2(0.7);
-
-
-		Ray new_ray = Ray(closest_hit.pt + closest_hit.normal * 0.001, light_pt - closest_hit.pt);
-		HitRecord dummy;
-		bool occluded = false;
-		for (int j = 0; j < 6; ++j) {
-			if (test_sphere(ubo.spheres[j], new_ray, dummy)) {
-				occluded = true;
-				break;
-			}
-		}
-		if (occluded) {
-			color.rgb *= 0.5;
-		}
-
-	}
-#endif
-
-	return color;
 }
+
+
+vec3 compute_color_for_ray(Ray ray)
+{
+	const int MAX_BOUNCE_COUNT = 10;
+	vec3 remaining_weight = vec3(1);
+	vec3 result = vec3(0);
+
+	for (int bounce = 0; bounce < MAX_BOUNCE_COUNT; ++bounce) {
+
+		HitRecord hit_record;
+		intersect_ray_with_world(ray, hit_record);
+
+		if (hit_record.dist == INF_DIST) {
+			// We hit the environment.
+			vec3 sky_color = mix(vec3(0, 0, 0.4), vec3(0.7, 0.7, 1), ray.dir.y);
+			result += sky_color * remaining_weight;
+			break;
+		}
+
+		result += hit_record.emissive * remaining_weight;
+		remaining_weight *= hit_record.albedo;
+
+		if (all(lessThan(remaining_weight, vec3(0.01)))) {
+			break;
+		}
+
+		// New ray for next iteration
+		ray.origin = hit_record.pt + hit_record.normal * RAY_START_BIAS;
+		ray.dir = normalize(hit_record.normal + random_unit_vector(rng_state));
+	}
+	return result;
+}
+
+
+
 
 
 void main()
 {
+	init_rng();
 	const ivec2 screen_size = imageSize(inout_image);
 	const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
 
 	Ray ray;
 
 	const uint progression_index = PushConstants.progression_index;
-	//const uint progression_index = 0;
 
 	vec2 offset = eval_r2_sequence(progression_index);
-	//make_primary_ray(vec2(0, 0), ray);
 	make_primary_ray(offset, ray);
 
-	vec3 color = get_world_color(ray);
-
-	/*
-	// This makes 0.5 come out as 128 on the screen.
-	// That is not correct as far as I know.
-	color.r = pow(color.r, 2.2);
-	color.g = pow(color.g, 2.2);
-	color.b = pow(color.b, 2.2);
-	*/
-
+	vec3 color = compute_color_for_ray(ray);
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
-
 	// Branchless condition: if we just started a progression, we treat
 	// the accumulation count as 0. This will overwrite the full result with our
 	// color, saving us an image clear.
 	float accum_count = accum_color.a * float(progression_index > 0);
-
 	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
-
-
+	new_accum_rgb = min(new_accum_rgb, vec3(1));
 	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
 }

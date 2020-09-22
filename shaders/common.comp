@@ -1,0 +1,217 @@
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// See https://community.khronos.org/t/drawing-to-image-from-compute-shader-example/7116/2
+layout(binding = 0, rgba8) uniform image2D inout_image;
+
+layout(push_constant) uniform PushConstantBlock 
+{
+	mat4 view_to_world_transform;
+	uint progression_index; 
+	float delta_time; 
+} PushConstants;
+
+//----------------------------------------------------------------------
+
+const float TWO_PI = 6.283185307179586476925286766559;
+const float INF_DIST = 999999;
+const float RAY_START_BIAS = 1e-4; // Prevents self-intersection 
+
+//----------------------------------------------------------------------
+
+struct Ray
+{
+	vec3 origin;
+	vec3 dir;
+};
+
+
+struct HitRecord
+{
+	vec3 pt;
+	vec3 normal;
+	vec3 albedo;
+	vec3 emissive;
+	float dist;
+};
+
+//----------------------------------------------------------------------
+
+// Pseudo-rng from https://blog.demofox.org/2020/05/25/casual-shadertoy-path-tracing-1-basic-camera-diffuse-emissive/
+uint rng_state;
+void init_rng()
+{
+	rng_state = uint(dot(uvec3(gl_WorkGroupID.xy, PushConstants.progression_index), uvec3(1973, 9277, 26699))) | uint(1);
+}
+
+uint wang_hash(inout uint seed)
+{
+    seed = uint(seed ^ uint(61)) ^ uint(seed >> uint(16));
+    seed *= uint(9);
+    seed = seed ^ (seed >> 4);
+    seed *= uint(0x27d4eb2d);
+    seed = seed ^ (seed >> 15);
+    return seed;
+}
+ 
+float random_float_01(inout uint state)
+{
+    return float(wang_hash(state)) / 4294967296.0;
+}
+
+vec2 random_vec2_01(inout uint state)
+{
+    return vec2(random_float_01(state), random_float_01(state));
+}
+
+vec3 random_vec3_01(inout uint state)
+{
+    return vec3(random_float_01(state), random_float_01(state), random_float_01(state));
+}
+ 
+vec3 random_unit_vector(inout uint state)
+{
+    float z = random_float_01(state) * 2.0f - 1.0f;
+    float a = random_float_01(state) * TWO_PI;
+    float r = sqrt(1.0f - z * z);
+    float x = r * cos(a);
+    float y = r * sin(a);
+    return vec3(x, y, z);
+}
+
+//----------------------------------------------------------------------
+
+// Evaluates the R2 sequence described in
+// http://extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences/
+// Implementation inspired by https://www.pouet.net/topic.php?which=11501&page=1#c546333
+vec2 eval_r2_sequence(uint sample_index)
+{
+	const float PLASTIC_CONSTANT = 1.32471795f;
+	return fract(float(sample_index) * vec2(1.0 / PLASTIC_CONSTANT, 1.0 / (PLASTIC_CONSTANT * PLASTIC_CONSTANT)));
+}
+
+//----------------------------------------------------------------------
+
+// Creates a primary ray through this local workgroup's pixel,
+// with the specified offset within the pixel. Offset coefficents should be in interval [0, 1],
+// 0.5 is the pixel center.
+void make_primary_ray(vec2 offset, out Ray out_ray)
+{
+	// These could come from push constants or a uniform buffer.
+	const vec2 screen_dims = vec2(imageSize(inout_image));
+	const float eye_dist = 2;
+
+	// The image plane will go from -1 to +1 in the x direction.
+	// The y direction is proportional to x, scaled with the aspect ratio.
+	const vec2 this_pixel = vec2(gl_WorkGroupID.xy) - vec2(0.5) + offset;
+	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
+	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
+
+	//out_ray.origin = vec3(0);
+	//out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -eye_dist);
+	out_ray.origin = (PushConstants.view_to_world_transform * vec4(0, 0, 0, 1)).xyz;
+	out_ray.dir = (PushConstants.view_to_world_transform * vec4(center_pixel_dx, center_pixel_dy, -eye_dist, 0)).xyz;
+}
+
+//----------------------------------------------------------------------
+
+/*
+
+// From Alan Wolfe /demofox
+bool TestQuadTrace(in Ray  rayPos, in vec3 rayDir, inout SRayHitInfo info, in vec3 a, in vec3 b, in vec3 c, in vec3 d)
+{
+    // calculate normal and flip vertices order if needed
+    vec3 normal = normalize(cross(c-a, c-b));
+    if (dot(normal, rayDir) > 0.0f)
+    {
+        normal *= -1.0f;
+        
+		vec3 temp = d;
+        d = a;
+        a = temp;
+        
+        temp = b;
+        b = c;
+        c = temp;
+    }
+    
+    vec3 p = rayPos;
+    vec3 q = rayPos + rayDir;
+    vec3 pq = q - p;
+    vec3 pa = a - p;
+    vec3 pb = b - p;
+    vec3 pc = c - p;
+    
+    // determine which triangle to test against by testing against diagonal first
+    vec3 m = cross(pc, pq);
+    float v = dot(pa, m);
+    vec3 intersectPos;
+    if (v >= 0.0f)
+    {
+        // test against triangle a,b,c
+        float u = -dot(pb, m);
+        if (u < 0.0f) return false;
+        float w = ScalarTriple(pq, pb, pa);
+        if (w < 0.0f) return false;
+        float denom = 1.0f / (u+v+w);
+        u*=denom;
+        v*=denom;
+        w*=denom;
+        intersectPos = u*a+v*b+w*c;
+    }
+    else
+    {
+        vec3 pd = d - p;
+        float u = dot(pd, m);
+        if (u < 0.0f) return false;
+        float w = ScalarTriple(pq, pa, pd);
+        if (w < 0.0f) return false;
+        v = -v;
+        float denom = 1.0f / (u+v+w);
+        u*=denom;
+        v*=denom;
+        w*=denom;
+        intersectPos = u*a+v*d+w*c;
+    }
+    
+    float dist;
+    if (abs(rayDir.x) > 0.1f)
+    {
+        dist = (intersectPos.x - rayPos.x) / rayDir.x;
+    }
+    else if (abs(rayDir.y) > 0.1f)
+    {
+        dist = (intersectPos.y - rayPos.y) / rayDir.y;
+    }
+    else
+    {
+        dist = (intersectPos.z - rayPos.z) / rayDir.z;
+    }
+    
+	if (dist > c_minimumRayHitTime && dist < info.dist)
+    {
+        info.dist = dist;        
+        info.normal = normal;        
+        return true;
+    }    
+    
+    return false;
+} 
+*/
+
+
+// Returns a negative number if no hit.
+float hit_sphere_shape(vec3 center, float radius, Ray r)
+{
+	// From Peter Shirley's RTIOW.
+	vec3 oc = r.origin - center;
+	float a = dot(r.dir, r.dir);
+	float b = 2 * dot(oc, r.dir);
+	float c = dot(oc, oc) - radius*radius;
+	float discriminant = b*b - 4*a*c;
+	if (discriminant < 0) {
+		return -1;
+	} else {
+		return (-b - sqrt(discriminant)) / (2 * a);
+	}
+}
+
