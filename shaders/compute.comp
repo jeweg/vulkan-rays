@@ -101,6 +101,8 @@ void main()
 	make_primary_ray(offset, ray);
 
 	vec3 color = compute_color_for_ray(ray);
+	color = ACESFilm(color);
+
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
 	// Branchless condition: if we just started a progression, we treat
 	// the accumulation count as 0. This will overwrite the full result with our
@@ -108,5 +110,8 @@ void main()
 	float accum_count = accum_color.a * float(progression_index > 0);
 	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
 	new_accum_rgb = min(new_accum_rgb, vec3(1));
+
+	// Not that we can output linear color. We render into an sRGB attachment
+	// and get the conversion for free.
 	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
 }
