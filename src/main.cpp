@@ -227,6 +227,7 @@ private:
 
 MouseDragger g_left_mouse_dragger;
 MouseDragger g_right_mouse_dragger;
+float g_wheel_dragger = 0;
 
 static void cursor_position_callback(GLFWwindow *window, double xpos, double ypos)
 {
@@ -240,6 +241,11 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) { g_right_mouse_dragger.start_dragging(); }
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) { g_left_mouse_dragger.stop_dragging(); }
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) { g_right_mouse_dragger.stop_dragging(); }
+}
+
+static void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
+{
+    g_wheel_dragger = yoffset;
 }
 
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
@@ -896,6 +902,7 @@ int main()
 
         glfwSetCursorPosCallback(glfw_window, &cursor_position_callback);
         glfwSetMouseButtonCallback(glfw_window, &mouse_button_callback);
+        glfwSetScrollCallback(glfw_window, &scroll_callback);
 
         // The camera state
         float eye_angle_h = 0;
@@ -949,6 +956,8 @@ int main()
                 auto &m = compute_pipeline.push_constants.view_to_world_transform;
 
                 if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02; }
+                eye_dist -= g_wheel_dragger;
+                g_wheel_dragger = 0;
                 eye_dist = std::min(eye_dist, 20.f);
                 eye_dist = std::max(eye_dist, 1.f);
 

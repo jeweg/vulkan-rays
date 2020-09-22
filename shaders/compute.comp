@@ -111,27 +111,44 @@ bool test_sphere(Sphere sphere, Ray ray, out HitRecord out_hit_record)
 
 vec3 get_world_color(Ray ray)
 {
-	HitRecord closest_hit = HitRecord(vec3(0), vec3(0), vec3(0.3, 0.3, 0.3), 999999);
+#if 0
+	// Uncomment to check for gamma correctness.
+	// The left half should have the same perceived brightness as the
+	// stipple pattern in the right half when squinting.
+	vec3 bg_color = vec3(0.5);
+	if (gl_WorkGroupID.x > 600) {
+		bool x_even = (gl_WorkGroupID.x & 1) != 0;
+		bool y_even = (gl_WorkGroupID.y & 1) != 0;
+		bg_color = x_even != y_even ? vec3(0) : vec3(1);
+	}
+#else
+	vec3 bg_color = vec3(0.4, 0.5, 0.8);
+#endif
+
+	HitRecord closest_hit = HitRecord(vec3(0), vec3(0), bg_color, 999999);
 
 	for (int i = 0; i < 6; ++i) {
 		HitRecord this_hit;
 		if (test_sphere(ubo.spheres[i], ray, this_hit) && this_hit.distance < closest_hit.distance) {
 			closest_hit.pt = this_hit.pt;
 			closest_hit.normal = this_hit.normal;
+			//closest_hit.albedo = this_hit.normal * vec3(0.5) + vec3(0.5);
 			closest_hit.albedo = this_hit.albedo;
 			closest_hit.distance = this_hit.distance;
 		}
 	}
 	vec3 color = closest_hit.albedo.rgb;
+
+#if 1
 	if (closest_hit.distance < 9999) {
 
 		// Send a shadow ray for now.
 
 		vec3 light_pt = vec3(-10, 5, -2);
-		light_pt.xy += (eval_r2_sequence(PushConstants.progression_index) - vec2(0.5)) * vec2(0.3);
+		light_pt.xy += (eval_r2_sequence(PushConstants.progression_index) - vec2(0.5)) * vec2(0.7);
 
 
-		Ray new_ray = Ray(closest_hit.pt + closest_hit.normal * 0.0001, light_pt - closest_hit.pt);
+		Ray new_ray = Ray(closest_hit.pt + closest_hit.normal * 0.001, light_pt - closest_hit.pt);
 		HitRecord dummy;
 		bool occluded = false;
 		for (int j = 0; j < 6; ++j) {
@@ -145,6 +162,7 @@ vec3 get_world_color(Ray ray)
 		}
 
 	}
+#endif
 
 	return color;
 }
@@ -166,12 +184,23 @@ void main()
 
 	vec3 color = get_world_color(ray);
 
+	/*
+	// This makes 0.5 come out as 128 on the screen.
+	// That is not correct as far as I know.
+	color.r = pow(color.r, 2.2);
+	color.g = pow(color.g, 2.2);
+	color.b = pow(color.b, 2.2);
+	*/
+
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
+
 	// Branchless condition: if we just started a progression, we treat
 	// the accumulation count as 0. This will overwrite the full result with our
 	// color, saving us an image clear.
 	float accum_count = accum_color.a * float(progression_index > 0);
 
 	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
+
+
 	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
 }
