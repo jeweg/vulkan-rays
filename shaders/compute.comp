@@ -6,7 +6,7 @@ struct Sphere
 {
 	vec4 center_and_radius;
 	vec4 albedo_and_roughness;
-	vec4 emissive;
+	vec4 emissive_and_ior;
 	vec4 specular_and_coefficient;
 };
 
@@ -25,7 +25,7 @@ void test_sphere(Sphere sphere, Ray ray, float max_distance, out HitRecord out_h
 		out_hit_record.pt = pt;
 		out_hit_record.normal = normalize(pt - sphere.center_and_radius.xyz);
 		out_hit_record.albedo_and_roughness = sphere.albedo_and_roughness;
-		out_hit_record.emissive = sphere.emissive.rgb;
+		out_hit_record.emissive_and_ior = sphere.emissive_and_ior;
 		out_hit_record.specular_and_coefficient = sphere.specular_and_coefficient;
 		out_hit_record.dist = d;
 	} else {
@@ -67,7 +67,7 @@ vec3 compute_color_for_ray(Ray ray)
 			break;
 		}
 
-		result += hit_record.emissive * remaining_weight;
+		result += hit_record.emissive_and_ior.xyz * remaining_weight;
 
 		if (bounce + 1 == MAX_BOUNCE_COUNT) {
 			break;
@@ -75,7 +75,17 @@ vec3 compute_color_for_ray(Ray ray)
 
 		// Make a new ray for the next iteration.
 
-		float do_specular = float(random_float_01(rng_state) <= hit_record.specular_and_coefficient.w);
+		float specular_chance = hit_record.specular_and_coefficient.w;
+		if (specular_chance > 0) {
+			specular_chance = compute_fresnel_reflect_amount(1.0, hit_record.emissive_and_ior.w, normalize(ray.dir), hit_record.normal, 
+				hit_record.specular_and_coefficient.w, 1);
+		}
+		float do_specular = float(random_float_01(rng_state) <= specular_chance);
+
+		// get the probability for choosing the ray type we chose
+		float ray_probability = (do_specular == 1.0f) ? specular_chance : 1.0f - specular_chance; 
+		// avoid numerical issues causing a divide by zero, or nearly so (more important later, when we add refraction)
+		ray_probability = max(ray_probability, 0.001f);  
 
 		vec3 ray_dir_diffuse = hit_record.normal + random_unit_vector(rng_state);
 		vec3 ray_dir_specular = reflect(ray.dir, hit_record.normal);
@@ -90,6 +100,10 @@ vec3 compute_color_for_ray(Ray ray)
 		ray.origin = hit_record.pt + hit_record.normal * RAY_START_BIAS;
 
 		remaining_weight *= mix(hit_record.albedo_and_roughness.xyz, hit_record.specular_and_coefficient.xyz, do_specular);
+
+		// since we chose randomly between diffuse and specular,
+		// we need to account for the times we didn't do one or the other.
+		remaining_weight /= ray_probability;
 
 		// Terminate rays early by playing russian roulette.
 		float russian_roulette_prob = max(remaining_weight.x, max(remaining_weight.y, remaining_weight.z));
@@ -122,7 +136,7 @@ void main()
 	make_primary_ray(offset, ray);
 
 	vec3 color = compute_color_for_ray(ray);
-	color = ACESFilm(color);
+	color = aces_tone_mapping(color);
 
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
 	// Branchless condition: if we just started a progression, we treat

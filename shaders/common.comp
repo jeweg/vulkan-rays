@@ -30,7 +30,7 @@ struct HitRecord
 	vec3 pt;
 	vec3 normal;
 	vec4 albedo_and_roughness;
-	vec3 emissive;
+	vec4 emissive_and_ior;
 	vec4 specular_and_coefficient;
 };
 
@@ -219,7 +219,7 @@ float hit_sphere_shape(vec3 center, float radius, Ray r)
 // ACES tone mapping curve fit to go from HDR to LDR
 //https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
 // Thanks, Alan Wolfe
-vec3 ACESFilm(vec3 x)
+vec3 aces_tone_mapping(vec3 x)
 {
     float a = 2.51f;
     float b = 0.03f;
@@ -227,5 +227,28 @@ vec3 ACESFilm(vec3 x)
     float d = 0.59f;
     float e = 0.14f;
     return clamp((x*(a*x + b)) / (x*(c*x + d) + e), 0.0f, 1.0f);
+}
+
+
+// Schlick aproximation
+float compute_fresnel_reflect_amount(float n1, float n2, vec3 normal, vec3 incident, float f0, float f90)
+{
+        float r0 = (n1-n2) / (n1+n2);
+        r0 *= r0;
+        float cosX = -dot(normal, incident);
+        if (n1 > n2)
+        {
+            float n = n1/n2;
+            float sinT2 = n*n*(1.0-cosX*cosX);
+            // Total internal reflection
+            if (sinT2 > 1.0)
+                return f90;
+            cosX = sqrt(1.0-sinT2);
+        }
+        float x = 1.0-cosX;
+        float ret = r0+(1.0-r0)*x*x*x*x*x;
+ 
+        // adjust reflect multiplier for object reflectivity
+        return mix(f0, f90, ret);
 }
 

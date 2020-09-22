@@ -771,7 +771,7 @@ int main()
             {
                 glm::vec4 center_and_radius;
                 glm::vec4 albedo_and_roughness;
-                glm::vec4 emissive;
+                glm::vec4 emissive_and_ior;
                 glm::vec4 specular_and_coefficient;
             };
 
@@ -866,42 +866,42 @@ int main()
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
                 sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
                 sphere.albedo_and_roughness = glm::vec4(1, 0.7, 0, 0.3);
-                sphere.emissive = glm::vec4(3.0, 2.7, 0.8, 0);
+                sphere.emissive_and_ior = glm::vec4(3.0, 2.7, 0.8, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.6);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
                 sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
                 sphere.albedo_and_roughness = glm::vec4(0.7, 0.3, 0.3, 0.4);
-                sphere.emissive = glm::vec4(0);
+                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 0.8, 0.4, 0.6);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
                 sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
                 sphere.albedo_and_roughness = glm::vec4(0.1, 0.4, 0.9, 0.9);
-                sphere.emissive = glm::vec4(0);
+                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.0);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
                 sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
                 sphere.albedo_and_roughness = glm::vec4(0.86, 0, 0, 0.5);
-                sphere.emissive = glm::vec4(0);
+                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
                 sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
                 sphere.albedo_and_roughness = glm::vec4(0.8, 0.8, 0.8, 0.5);
-                sphere.emissive = glm::vec4(0);
+                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
             }
             {
                 ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
                 sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
                 sphere.albedo_and_roughness = glm::vec4(0.1, 0.7, 0.2, 0.5);
-                sphere.emissive = glm::vec4(0);
+                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
                 sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
             }
         }
