@@ -9,6 +9,7 @@ set(sources
 	src/queues.hpp
 	src/queues.cpp
 	src/utils.hpp
+	src/imguiv.h
 )
 
 set(glsl_sources
@@ -64,10 +65,30 @@ set(build_into_template_path "${CMAKE_CURRENT_BINARY_DIR}/build_info.hpp.in")
 file(WRITE "${build_into_template_path}" ${build_info_hpp_in})
 configure_file("${build_into_template_path}" "build_info.hpp")
 
+set(imgui_sources
+	3rd-party/imgui/imgui.cpp
+	3rd-party/imgui/imgui_demo.cpp
+	3rd-party/imgui/imgui_draw.cpp 
+	3rd-party/imgui/imgui_widgets.cpp
+	3rd-party/imgui/imconfig.h 
+	3rd-party/imgui/imgui.h  
+	3rd-party/imgui/imgui_internal.h  
+	3rd-party/imgui/imstb_rectpack.h  
+	3rd-party/imgui/imstb_textedit.h  
+	3rd-party/imgui/imstb_truetype.h
+
+
+	3rd-party/imgui/examples/imgui_impl_vulkan.h
+	3rd-party/imgui/examples/imgui_impl_vulkan.cpp
+	3rd-party/imgui/examples/imgui_impl_glfw.h
+	3rd-party/imgui/examples/imgui_impl_glfw.cpp
+)
+
 add_executable(vulkan-rays
 	${sources}
 	${glsl_sources}
 	${spirv_files}
+	${imgui_sources}
 )
 target_compile_features(vulkan-rays PRIVATE cxx_std_17)
 target_link_libraries(vulkan-rays PRIVATE Vulkan::Vulkan glfw)
@@ -75,5 +96,7 @@ target_include_directories(vulkan-rays PRIVATE
 	3rd-party/vma/src 
 	3rd-party/debugbreak 
 	3rd-party/glm 
+	3rd-party/imgui
+	3rd-party/imgui/examples
 	"${CMAKE_CURRENT_BINARY_DIR}"
 )

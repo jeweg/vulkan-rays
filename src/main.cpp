@@ -7,6 +7,10 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "build_info.hpp"
 #include "debugbreak.h"
 
+#include "imgui.h"
+#include "imgui_impl_vulkan.h"
+#include "imgui_impl_glfw.h"
+
 #define GLM_FORCE_SWIZZLE
 #include "glm/vec2.hpp"
 #include "glm/vec4.hpp"
@@ -182,6 +186,8 @@ void RunSingleTimeCommands(vk::Device device, const Queues &queues, std::functio
 
     inner_body(command_buffers.front().get());
 
+    command_buffers.front()->end();
+
     auto submit_info = vk::SubmitInfo{}.setCommandBuffers(command_buffers.front().get());
     queues.get_queue(Queue::Graphics).submit({submit_info}, {});
     device.waitIdle();
@@ -231,21 +237,25 @@ float g_wheel_dragger = 0;
 
 static void cursor_position_callback(GLFWwindow *window, double xpos, double ypos)
 {
-    g_left_mouse_dragger.update(xpos, ypos);
-    g_right_mouse_dragger.update(xpos, ypos);
+    if (!ImGui::GetIO().WantCaptureMouse) {
+        g_left_mouse_dragger.update(xpos, ypos);
+        g_right_mouse_dragger.update(xpos, ypos);
+    }
 }
 
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
 {
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) { g_left_mouse_dragger.start_dragging(); }
-    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) { g_right_mouse_dragger.start_dragging(); }
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) { g_left_mouse_dragger.stop_dragging(); }
-    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) { g_right_mouse_dragger.stop_dragging(); }
+    if (!ImGui::GetIO().WantCaptureMouse) {
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) { g_left_mouse_dragger.start_dragging(); }
+        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) { g_right_mouse_dragger.start_dragging(); }
+        if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) { g_left_mouse_dragger.stop_dragging(); }
+        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_RELEASE) { g_right_mouse_dragger.stop_dragging(); }
+    }
 }
 
 static void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
 {
-    g_wheel_dragger = yoffset;
+    if (!ImGui::GetIO().WantCaptureMouse) { g_wheel_dragger = static_cast<float>(yoffset); }
 }
 
 constexpr size_t NUM_FRAMES_IN_FLIGHT = 3;
@@ -862,61 +872,86 @@ int main()
         // Define world
 
         {
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
-                sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
-                sphere.albedo_and_roughness = glm::vec4(1, 0.7, 0, 0.3);
-                sphere.emissive_and_ior = glm::vec4(3.0, 2.7, 0.8, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.6);
-            }
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
-                sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
-                sphere.albedo_and_roughness = glm::vec4(0.7, 0.3, 0.3, 0.4);
-                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 0.8, 0.4, 0.6);
-            }
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
-                sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
-                sphere.albedo_and_roughness = glm::vec4(0.1, 0.4, 0.9, 0.9);
-                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.0);
-            }
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
-                sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
-                sphere.albedo_and_roughness = glm::vec4(0.86, 0, 0, 0.5);
-                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-            }
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
-                sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
-                sphere.albedo_and_roughness = glm::vec4(0.8, 0.8, 0.8, 0.5);
-                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-            }
-            {
-                ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
-                sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
-                sphere.albedo_and_roughness = glm::vec4(0.1, 0.7, 0.2, 0.5);
-                sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-                sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-            }
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
+            sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
+            sphere.albedo_and_roughness = glm::vec4(1, 0.7, 0, 0.3);
+            sphere.emissive_and_ior = glm::vec4(3.0, 2.7, 0.8, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.6);
+        }
+        {
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
+            sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
+            sphere.albedo_and_roughness = glm::vec4(0.7, 0.3, 0.3, 0.4);
+            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 0.8, 0.4, 0.6);
+        }
+        {
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
+            sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
+            sphere.albedo_and_roughness = glm::vec4(0.1, 0.4, 0.9, 0.9);
+            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.0);
+        }
+        {
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
+            sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
+            sphere.albedo_and_roughness = glm::vec4(0.86, 0, 0, 0.5);
+            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
+        }
+        {
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
+            sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
+            sphere.albedo_and_roughness = glm::vec4(0.8, 0.8, 0.8, 0.5);
+            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
+        }
+        {
+            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
+            sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
+            sphere.albedo_and_roughness = glm::vec4(0.1, 0.7, 0.2, 0.5);
+            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
+            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
         }
 
-        //----------------------------------------------------------------------
-        // Render loop
+        // ----------------------------------------------------------------------
+        // More setup for GLFW and ImGui
 
         glfwSetKeyCallback(glfw_window, [](GLFWwindow *window, int key, int scancode, int action, int mods) {
-            if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {}
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            if (!ImGui::GetIO().WantCaptureKeyboard) {
+                if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) { glfwSetWindowShouldClose(window, GLFW_TRUE); }
+            }
         });
 
         glfwSetCursorPosCallback(glfw_window, &cursor_position_callback);
         glfwSetMouseButtonCallback(glfw_window, &mouse_button_callback);
         glfwSetScrollCallback(glfw_window, &scroll_callback);
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        {
+            ImGui_ImplVulkan_InitInfo ci = {0};
+            ci.Instance = instance.get();
+            ci.PhysicalDevice = phys_device;
+            ci.Device = device.get();
+            ci.QueueFamily = queues.get_family_index(Queue::Graphics);
+            ci.Queue = queues.get_queue(Queue::Graphics);
+            ci.PipelineCache = pipeline_cache.get();
+            ci.DescriptorPool = descriptor_pool.get();
+            ci.MinImageCount = NUM_FRAMES_IN_FLIGHT;
+            ci.ImageCount = NUM_FRAMES_IN_FLIGHT;
+            ci.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+            ci.CheckVkResultFn = [](VkResult result) { ASSUME(result == VK_SUCCESS); };
+            ASSUME(ImGui_ImplVulkan_Init(&ci, graphics_pipeline.render_pass.get()));
+
+            RunSingleTimeCommands(
+                device.get(), queues, [](vk::CommandBuffer cb) { ImGui_ImplVulkan_CreateFontsTexture(cb); });
+
+            ASSUME(ImGui_ImplGlfw_InitForVulkan(glfw_window, true));
+        }
+
+        //----------------------------------------------------------------------
+        // Render loop
 
         // The camera state
         float eye_angle_h = 0;
@@ -924,7 +959,6 @@ int main()
         float eye_dist = 7;
 
         uint64_t global_frame_number = 0;
-        std::chrono::high_resolution_clock clock;
         auto start_time = std::chrono::high_resolution_clock::now();
         uint32_t progression_index = 0;
         glm::mat4 last_rendered_view_transform;
@@ -938,6 +972,11 @@ int main()
             float delta_time_s = delta_time_mus / 1000000.0f;
 
             glfwPollEvents();
+
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+            ImGui::ShowDemoWindow();
 
             PerFrame &this_frame = per_frames[mod_frame_number];
             auto cmd_buffer = this_frame.begin_frame();
@@ -969,7 +1008,7 @@ int main()
             {
                 auto &m = compute_pipeline.push_constants.view_to_world_transform;
 
-                if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02; }
+                if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02f; }
                 eye_dist -= g_wheel_dragger;
                 g_wheel_dragger = 0;
                 eye_dist = std::min(eye_dist, 20.f);
@@ -977,8 +1016,8 @@ int main()
 
                 if (g_left_mouse_dragger.has_delta()) {
                     auto delta = g_left_mouse_dragger.get_delta();
-                    eye_angle_h += delta.x * 0.009;
-                    eye_angle_v += delta.y * 0.009;
+                    eye_angle_h += delta.x * 0.009f;
+                    eye_angle_v += delta.y * 0.009f;
                 }
 
                 constexpr float PI_OVER_2 = 1.57079632679f;
@@ -1044,14 +1083,21 @@ int main()
             cmd_buffer.bindDescriptorSets(
                 vk::PipelineBindPoint::eGraphics, graphics_pipeline.layout.get(), 0, ds.front(), {});
             cmd_buffer.draw(3, 1, 0, 0);
-            cmd_buffer.endRenderPass();
 
+            // Render to internal data structures, then render those to to Vulkan.
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buffer);
+
+            cmd_buffer.endRenderPass();
 
             this_frame.end_frame();
             ++global_frame_number;
             ++progression_index;
         }
         device->waitIdle();
+
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
 
         g_one_shot_graphics_command_pool.reset();
 
