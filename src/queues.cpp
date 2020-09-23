@@ -35,7 +35,7 @@ Queues::Queues(vk::PhysicalDevice pd, VkSurfaceKHR surface)
         if (fam_props.queueFlags & vk::QueueFlagBits::eGraphics) { mask |= QueueBit::G; }
         if (fam_props.queueFlags & vk::QueueFlagBits::eCompute) { mask |= QueueBit::C; }
         if (fam_props.queueFlags & vk::QueueFlagBits::eTransfer) { mask |= QueueBit::T; }
-        if (pd.getSurfaceSupportKHR(fam_index, surface)) { mask |= QueueBit::P; }
+        if (pd.getSurfaceSupportKHR(static_cast<uint32_t>(fam_index), surface)) { mask |= QueueBit::P; }
         // if (glfwGetPhysicalDevicePresentationSupport(instance, pd, fam_index)) { mask |= QueueBit::P; }
         queue_fam_masks.push_back(mask);
     }
