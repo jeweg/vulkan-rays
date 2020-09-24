@@ -106,7 +106,6 @@ SwapChain::~SwapChain() noexcept = default;
 
 void SwapChain::recreate()
 {
-    _device.get().waitIdle();
     const auto &surface_caps = _device.get_physical_device()
                                    .getSurfaceCapabilities2KHR(vk::PhysicalDeviceSurfaceInfo2KHR{}.setSurface(_surface))
                                    .surfaceCapabilities;
@@ -137,7 +136,6 @@ void SwapChain::recreate()
         // The only solution is to not create a new swapchain. We'll destroy our resources to
         // indicate this state.
         _swapchain.reset();
-        _device.get().waitIdle();
         return;
     }
 
@@ -202,8 +200,6 @@ void SwapChain::recreate()
                                          .setLayerCount(1))
                 .setFormat(_surface_format.format))));
     }
-
-    _device.get().waitIdle();
 }
 
 
