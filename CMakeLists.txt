@@ -6,10 +6,11 @@ add_subdirectory(3rd-party/glfw)
 
 set(sources
 	src/main.cpp
-	src/queues.hpp
-	src/queues.cpp
 	src/utils.hpp
-	src/imguiv.h
+	src/device.hpp
+	src/device.cpp
+	src/swap_chain.hpp
+	src/swap_chain.cpp
 )
 
 set(glsl_sources
@@ -92,6 +93,7 @@ add_executable(vulkan-rays
 )
 target_compile_features(vulkan-rays PRIVATE cxx_std_17)
 target_link_libraries(vulkan-rays PRIVATE Vulkan::Vulkan glfw)
+target_compile_definitions(vulkan-rays PRIVATE VULKAN_HPP_DISPATCH_LOADER_DYNAMIC)
 target_include_directories(vulkan-rays PRIVATE
 	3rd-party/vma/src 
 	3rd-party/debugbreak 
