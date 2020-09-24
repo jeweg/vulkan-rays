@@ -170,8 +170,10 @@ int main()
         for (uint32_t i = 0; i < glfw_exts_count; ++i) { instance_extensions.push_back(glfw_exts[i]); }
 
         vk::ApplicationInfo appInfo("Test", 1, "Custom", 1, VK_API_VERSION_1_1);
-        std::vector<const char *> layer_names = {"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor"};
-        //"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor", "VK_LAYER_LUNARG_api_dump"};
+        std::vector<const char *> layer_names = {
+            "VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor",
+            //"VK_LAYER_LUNARG_api_dump",
+        };
         vk::UniqueInstance instance = vk::createInstanceUnique(vk::InstanceCreateInfo{}
                                                                    .setPApplicationInfo(&appInfo)
                                                                    .setPEnabledExtensionNames(instance_extensions)
@@ -631,7 +633,14 @@ int main()
             ImGui_ImplVulkan_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
-            ImGui::ShowDemoWindow();
+
+            // ImGui::ShowDemoWindow();
+            /*
+            ImGui::Begin("Controls", nullptr, 0);
+            static float f1;
+            ImGui::SliderFloat("Exposure", &f1, 0.1f, 20.0f, "%.2f");
+            ImGui::End();
+            */
 
             SwapChain::FrameImage frame = swap_chain.begin_next_frame();
             vk::CommandBuffer cmd_buffer = frame.get_cmd_buffer(Device::Queue::Graphics);

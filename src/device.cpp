@@ -104,7 +104,10 @@ Device::Device(vk::Instance instance, vk::PhysicalDevice physical_device, VkSurf
 }
 
 
-Device::~Device() {}
+Device::~Device()
+{
+    vmaDestroyAllocator(_vma_allocator);
+}
 
 
 void Device::init_queue_families(VkSurfaceKHR surface)
