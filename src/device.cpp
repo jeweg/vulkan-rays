@@ -16,21 +16,19 @@ public:
         // Serve from cache
         for (auto &entry : _cache) {
             if (entry.key == key) {
-                // std::cerr << "[fbc] serving from cache\n";
                 entry.last_lookup_time = _current_lookup_time;
                 return entry.value.get();
             }
         }
         // Create new element, cache it
-        // std::cerr << "[fbc] creating newly\n";
         CachedElement new_entry;
         new_entry.key = key;
 
         new_entry.value = _device.get().createFramebufferUnique(vk::FramebufferCreateInfo{}
                                                                     .setFlags(key.flags)
                                                                     .setAttachments(key.attachments)
-                                                                    .setWidth(key.extents.x)
-                                                                    .setHeight(key.extents.y)
+                                                                    .setWidth(key.extent.width)
+                                                                    .setHeight(key.extent.height)
                                                                     .setRenderPass(key.render_pass)
                                                                     .setLayers(key.layers));
         vk::Framebuffer new_fb = new_entry.value.get();
@@ -65,7 +63,7 @@ private:
 
 
 Device::Device(vk::Instance instance, vk::PhysicalDevice physical_device, VkSurfaceKHR surface) :
-    _physical_device(physical_device)
+    _instance(instance), _physical_device(physical_device)
 {
     ASSUME(physical_device);
 

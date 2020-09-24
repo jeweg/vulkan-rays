@@ -1,4 +1,4 @@
-//#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
+#define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include "vulkan/vulkan.hpp"
 
 #include "utils.hpp"
@@ -31,10 +31,8 @@
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
-// We avoid swapchain resizing issues here by
-// using a fixed size.
-constexpr int W = 1200;
-constexpr int H = 800;
+constexpr uint32_t INITIAL_WINDOW_WIDTH = 1200;
+constexpr uint32_t INITIAL_WINDOW_HEIGHT = 800;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -56,17 +54,6 @@ void glfwErrorCallback(int error, const char *description)
 {
     std::cerr << "GLFW error " << std::to_string(error) << ": " << description << "\n";
 }
-
-
-// Our surface gets created by GLFW so we manage it in a custom RAII class.
-// TODO: There's probably a way to use vulkan.hpp's unique handle system for this as well.
-struct SurfaceDestroyer
-{
-    vk::Instance instance;
-    VkSurfaceKHR surface;
-    SurfaceDestroyer(vk::Instance instance, VkSurfaceKHR surface) : instance(instance), surface(surface) {}
-    ~SurfaceDestroyer() { vkDestroySurfaceKHR(instance, surface, nullptr); }
-};
 
 
 bool g_mouse_dragging = false;
@@ -110,7 +97,6 @@ private:
 MouseDragger g_left_mouse_dragger;
 MouseDragger g_right_mouse_dragger;
 float g_wheel_dragger = 0;
-bool g_window_resized = false;
 
 static void cursor_position_callback(GLFWwindow *window, double xpos, double ypos)
 {
@@ -136,11 +122,73 @@ static void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
 }
 
 
-static void window_resized_callback(GLFWwindow *window, int width, int height)
+class Window
 {
-    g_window_resized = true;
-}
+    GLFWwindow *_glfw_window = nullptr;
+    vk::Instance _vk_instance;
+    VkSurfaceKHR _vk_surface = VK_NULL_HANDLE;
+    std::unique_ptr<SwapChain> _swap_chain;
+    uint32_t _width = -1;
+    uint32_t _height = -1;
 
+public:
+    Window(vk::Instance vk_instance, uint32_t w, uint32_t h, const char *title) :
+        _vk_instance(vk_instance), _width(w), _height(h)
+    {
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        _glfw_window = glfwCreateWindow(w, h, title, nullptr, nullptr);
+        ASSUME(_glfw_window);
+        glfwSetWindowUserPointer(_glfw_window, this);
+        check_vk_result(glfwCreateWindowSurface(_vk_instance, _glfw_window, nullptr, &_vk_surface));
+
+        glfwSetFramebufferSizeCallback(_glfw_window, &window_resized_callback);
+    }
+
+    ~Window()
+    {
+        if (_vk_surface) { vkDestroySurfaceKHR(_vk_instance, _vk_surface, nullptr); }
+        if (_glfw_window) { glfwDestroyWindow(_glfw_window); }
+    }
+
+    vk::SurfaceKHR get_surface() const { return _vk_surface; }
+    GLFWwindow *get_glfw_window() { return _glfw_window; }
+    bool should_close() { return glfwWindowShouldClose(_glfw_window); }
+
+    vk::Extent2D get_extent() const { return vk::Extent2D(_width, _height); }
+    uint32_t get_width() const { return _width; }
+    uint32_t get_height() const { return _height; }
+
+    void make_swap_chain(const Device &device, bool want_vsync = true, bool want_limiter = true)
+    {
+        _swap_chain = std::make_unique<SwapChain>(device, _vk_surface, _width, _height, want_vsync, want_limiter);
+    }
+
+    SwapChain &get_swap_chain()
+    {
+        ASSUME(_swap_chain);
+        return *_swap_chain;
+    }
+
+    void destroy_swap_chain() { _swap_chain.reset(); }
+
+private:
+    void on_resized(int w, int h)
+    {
+        _width = w;
+        _height = h;
+        // We might not wanna resize right away, just take notice of the fact that
+        // stuff has to be recreated. We only want to actually recreate once we need it.
+        // The size might change multiple times before we actually need the swap chain again.
+        // But we can do let SwapChain worry about its own laziness.
+        if (_swap_chain) { _swap_chain->set_extent(w, h); }
+    }
+
+    static void window_resized_callback(GLFWwindow *window, int w, int h)
+    {
+        ASSUME(glfwGetWindowUserPointer(window));
+        static_cast<Window *>(glfwGetWindowUserPointer(window))->on_resized(w, h);
+    }
+};
 
 int main()
 {
@@ -195,25 +243,22 @@ int main()
         //----------------------------------------------------------------------
         // Use GLFW3 to create a window and a corresponding Vulkan surface.
 
+        // Init GLFW itself
         ASSUME(glfwInit());
         glfwSetErrorCallback(&glfwErrorCallback);
         ASSUME(glfwVulkanSupported());
 
-        // We're initialializing Vulkan ourselves.
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        Window window(instance.get(), 1200, 800, "Vulkan Rays");
 
-        GLFWwindow *glfw_window = glfwCreateWindow(1200, 800, "Vulkan Rays", nullptr, nullptr);
-        if (!glfw_window) {
-            glfwTerminate();
-            fatal("Failed to create window");
-        }
-
-        VkSurfaceKHR surface;
-        if (VkResult err = glfwCreateWindowSurface(instance.get(), glfw_window, nullptr, &surface)) {
-            glfwTerminate();
-            fatal("Failed to create window surface");
-        }
-        SurfaceDestroyer surface_destroyer(instance.get(), surface);
+        glfwSetKeyCallback(
+            window.get_glfw_window(), [](GLFWwindow *window, int key, int scancode, int action, int mods) {
+                if (!ImGui::GetIO().WantCaptureKeyboard) {
+                    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) { glfwSetWindowShouldClose(window, GLFW_TRUE); }
+                }
+            });
+        glfwSetCursorPosCallback(window.get_glfw_window(), &cursor_position_callback);
+        glfwSetMouseButtonCallback(window.get_glfw_window(), &mouse_button_callback);
+        glfwSetScrollCallback(window.get_glfw_window(), &scroll_callback);
 
         //----------------------------------------------------------------------
         // Physical and logical device.
@@ -227,9 +272,8 @@ int main()
         std::vector<const char *> device_extensions = {
             "VK_KHR_swapchain", "VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation"};
 
-        Device device(instance.get(), phys_device, surface);
-
-        SwapChain swap_chain(device, surface, W, H);
+        Device device(instance.get(), phys_device, window.get_surface());
+        window.make_swap_chain(device);
 
         //----------------------------------------------------------------------
         // Create offscreen image
@@ -241,7 +285,7 @@ int main()
             VMA_MEMORY_USAGE_GPU_ONLY,
             vk::ImageCreateInfo{}
                 .setImageType(vk::ImageType::e2D)
-                .setExtent({W, H, 1})
+                .setExtent({INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 1})
                 .setMipLevels(1)
                 .setArrayLayers(1)
                 .setFormat(IMAGE_FORMAT)
@@ -310,7 +354,7 @@ int main()
             graphics_pipeline.render_pass = device.get().createRenderPassUnique(
                 vk::RenderPassCreateInfo{}
                     .setAttachments(vk::AttachmentDescription{}
-                                        .setFormat(swap_chain.get_format())
+                                        .setFormat(window.get_swap_chain().get_format())
                                         .setSamples(vk::SampleCountFlagBits::e1)
                                         .setLoadOp(vk::AttachmentLoadOp::eClear)
                                         .setStoreOp(vk::AttachmentStoreOp::eStore)
@@ -347,10 +391,12 @@ int main()
             auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
                                             .setTopology(vk::PrimitiveTopology::eTriangleList)
                                             .setPrimitiveRestartEnable(false);
-            auto dyn_state = vk::PipelineDynamicStateCreateInfo{};
-            auto viewport_state = vk::PipelineViewportStateCreateInfo{}
-                                      .setViewports(vk::Viewport(0, 0, W, H, 0, 1))
-                                      .setScissors(vk::Rect2D({0, 0}, {W, H}));
+            auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(
+                std::initializer_list<vk::DynamicState>{vk::DynamicState::eViewport, vk::DynamicState::eScissor});
+            auto viewport_state =
+                vk::PipelineViewportStateCreateInfo{}
+                    .setViewports(vk::Viewport(0, 0, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 0, 1))
+                    .setScissors(vk::Rect2D({0, 0}, {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT}));
             auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
                                            .setPolygonMode(vk::PolygonMode::eFill)
                                            .setCullMode(vk::CullModeFlagBits::eNone)
@@ -577,16 +623,6 @@ int main()
         // ----------------------------------------------------------------------
         // More setup for GLFW and ImGui
 
-        glfwSetKeyCallback(glfw_window, [](GLFWwindow *window, int key, int scancode, int action, int mods) {
-            if (!ImGui::GetIO().WantCaptureKeyboard) {
-                if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) { glfwSetWindowShouldClose(window, GLFW_TRUE); }
-            }
-        });
-        glfwSetCursorPosCallback(glfw_window, &cursor_position_callback);
-        glfwSetMouseButtonCallback(glfw_window, &mouse_button_callback);
-        glfwSetScrollCallback(glfw_window, &scroll_callback);
-        glfwSetFramebufferSizeCallback(glfw_window, &window_resized_callback);
-
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         {
@@ -598,7 +634,7 @@ int main()
             ci.Queue = device.get_queue(Device::Queue::Graphics);
             ci.PipelineCache = pipeline_cache.get();
             ci.DescriptorPool = descriptor_pool.get();
-            ci.MinImageCount = swap_chain.get_num_frames_in_flight();
+            ci.MinImageCount = window.get_swap_chain().get_num_frames_in_flight();
             ci.ImageCount = ci.MinImageCount;
 
             ci.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -608,7 +644,7 @@ int main()
             device.run_commands(
                 Device::Queue::Graphics, [](vk::CommandBuffer cb) { ImGui_ImplVulkan_CreateFontsTexture(cb); });
 
-            ASSUME(ImGui_ImplGlfw_InitForVulkan(glfw_window, true));
+            ASSUME(ImGui_ImplGlfw_InitForVulkan(window.get_glfw_window(), true));
         }
 
         //----------------------------------------------------------------------
@@ -623,16 +659,12 @@ int main()
         uint32_t progression_index = 0;
         glm::mat4 last_rendered_view_transform;
 
-        while (!glfwWindowShouldClose(glfw_window)) {
+        while (!window.should_close()) {
             auto this_time = std::chrono::high_resolution_clock::now();
             uint64_t delta_time_mus =
                 std::chrono::duration_cast<std::chrono::microseconds>(this_time - start_time).count();
             float delta_time_s = delta_time_mus / 1000000.0f;
             glfwPollEvents();
-
-            ImGui_ImplVulkan_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::NewFrame();
 
             // ImGui::ShowDemoWindow();
             /*
@@ -642,126 +674,141 @@ int main()
             ImGui::End();
             */
 
-            SwapChain::FrameImage frame = swap_chain.begin_next_frame();
-            vk::CommandBuffer cmd_buffer = frame.get_cmd_buffer(Device::Queue::Graphics);
+            SwapChain::FrameImage frame = window.get_swap_chain().begin_next_frame();
+            if (frame.is_valid()) {
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
 
-            // Compute dispatch
+                vk::CommandBuffer cmd_buffer = frame.get_cmd_buffer(Device::Queue::Graphics);
 
-            cmd_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eTopOfPipe,
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::DependencyFlagBits::eByRegion,
-                {},
-                {},
-                vk::ImageMemoryBarrier{}
-                    .setImage(image)
-                    .setOldLayout(vk::ImageLayout::eUndefined)
-                    .setNewLayout(vk::ImageLayout::eGeneral)
-                    .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
-                    .setSubresourceRange(vk::ImageSubresourceRange{}
-                                             .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                                             .setBaseMipLevel(0)
-                                             .setLayerCount(1)
-                                             .setLevelCount(1)
-                                             .setBaseArrayLayer(0)));
+                // Compute dispatch
 
-            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
+                cmd_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eTopOfPipe,
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::DependencyFlagBits::eByRegion,
+                    {},
+                    {},
+                    vk::ImageMemoryBarrier{}
+                        .setImage(image)
+                        .setOldLayout(vk::ImageLayout::eUndefined)
+                        .setNewLayout(vk::ImageLayout::eGeneral)
+                        .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
+                        .setSubresourceRange(vk::ImageSubresourceRange{}
+                                                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                                 .setBaseMipLevel(0)
+                                                 .setLayerCount(1)
+                                                 .setLevelCount(1)
+                                                 .setBaseArrayLayer(0)));
 
-            //----------------------------------------------------------------------
-            // Update push constants
-            {
-                auto &m = compute_pipeline.push_constants.view_to_world_transform;
+                cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
 
-                if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02f; }
-                eye_dist -= g_wheel_dragger;
-                g_wheel_dragger = 0;
-                eye_dist = std::min(eye_dist, 20.f);
-                eye_dist = std::max(eye_dist, 1.f);
+                //----------------------------------------------------------------------
+                // Update push constants
+                {
+                    auto &m = compute_pipeline.push_constants.view_to_world_transform;
 
-                if (g_left_mouse_dragger.has_delta()) {
-                    auto delta = g_left_mouse_dragger.get_delta();
-                    eye_angle_h += delta.x * 0.009f;
-                    eye_angle_v += delta.y * 0.009f;
+                    if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02f; }
+                    eye_dist -= g_wheel_dragger;
+                    g_wheel_dragger = 0;
+                    eye_dist = std::min(eye_dist, 20.f);
+                    eye_dist = std::max(eye_dist, 1.f);
+
+                    if (g_left_mouse_dragger.has_delta()) {
+                        auto delta = g_left_mouse_dragger.get_delta();
+                        eye_angle_h += delta.x * 0.009f;
+                        eye_angle_v += delta.y * 0.009f;
+                    }
+
+                    constexpr float PI_OVER_2 = 1.57079632679f;
+                    eye_angle_v = std::min(eye_angle_v, PI_OVER_2 * 0.95f);
+                    eye_angle_v = std::max(eye_angle_v, -PI_OVER_2 * 0.95f);
+
+                    glm::vec3 eye(0, 0, eye_dist);
+                    eye = glm::rotateX(eye, eye_angle_v);
+                    eye = glm::rotateY(eye, eye_angle_h);
+                    compute_pipeline.push_constants.view_to_world_transform =
+                        glm::inverse(glm::lookAt(glm::vec3(eye), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0)));
+
+                    if (last_rendered_view_transform != compute_pipeline.push_constants.view_to_world_transform) {
+                        // Progression must start anew.
+                        progression_index = 0;
+                    }
+                    last_rendered_view_transform = compute_pipeline.push_constants.view_to_world_transform;
                 }
+                compute_pipeline.push_constants.delta_time = delta_time_s;
+                compute_pipeline.push_constants.progression_index = progression_index;
+                cmd_buffer.pushConstants<ComputePipeline::PushConstants>(
+                    compute_pipeline.layout.get(),
+                    vk::ShaderStageFlagBits::eCompute,
+                    0,
+                    compute_pipeline.push_constants);
 
-                constexpr float PI_OVER_2 = 1.57079632679f;
-                eye_angle_v = std::min(eye_angle_v, PI_OVER_2 * 0.95f);
-                eye_angle_v = std::max(eye_angle_v, -PI_OVER_2 * 0.95f);
 
-                glm::vec3 eye(0, 0, eye_dist);
-                eye = glm::rotateX(eye, eye_angle_v);
-                eye = glm::rotateY(eye, eye_angle_h);
-                compute_pipeline.push_constants.view_to_world_transform =
-                    glm::inverse(glm::lookAt(glm::vec3(eye), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0)));
+                cmd_buffer.bindDescriptorSets(
+                    vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
+                cmd_buffer.dispatch(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 1);
 
-                if (last_rendered_view_transform != compute_pipeline.push_constants.view_to_world_transform) {
-                    // Progression must start anew.
-                    progression_index = 0;
-                }
-                last_rendered_view_transform = compute_pipeline.push_constants.view_to_world_transform;
+                //----------------------------------------------------------------------
+                // Graphics dispatch
+
+                cmd_buffer.pipelineBarrier(
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eFragmentShader,
+                    vk::DependencyFlagBits::eByRegion,
+                    {},
+                    {},
+                    vk::ImageMemoryBarrier{}
+                        .setImage(image)
+                        .setOldLayout(vk::ImageLayout::eGeneral)
+                        .setNewLayout(vk::ImageLayout::eGeneral)
+                        .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
+                        .setSubresourceRange(vk::ImageSubresourceRange{}
+                                                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                                 .setBaseMipLevel(0)
+                                                 .setLayerCount(1)
+                                                 .setLevelCount(1)
+                                                 .setBaseArrayLayer(0)));
+
+                // TODO: after maximizing, the imageview we get from frame.get_image_view()
+                // seems to be invalid.
+                FramebufferKey fb_key;
+                fb_key.render_pass = graphics_pipeline.render_pass.get();
+                fb_key.extent = window.get_extent();
+                fb_key.attachments.push_back(frame.get_image_view());
+
+                cmd_buffer.beginRenderPass(
+                    vk::RenderPassBeginInfo{}
+                        .setRenderPass(graphics_pipeline.render_pass.get())
+                        .setRenderArea(vk::Rect2D({0, 0}, window.get_extent()))
+                        .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 1, 0, 0})))
+                        .setFramebuffer(device.get_framebuffer(fb_key)),
+                    vk::SubpassContents::eInline);
+                cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.pipeline.get());
+                cmd_buffer.bindDescriptorSets(
+                    vk::PipelineBindPoint::eGraphics, graphics_pipeline.layout.get(), 0, ds.front(), {});
+                cmd_buffer.setViewport(0, vk::Viewport(0, 0, window.get_width(), window.get_height(), 0, 1));
+                cmd_buffer.setScissor(0, vk::Rect2D({0, 0}, window.get_extent()));
+                cmd_buffer.draw(3, 1, 0, 0);
+
+                ImGui::Render();
+                ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buffer);
+
+                cmd_buffer.endRenderPass();
+
+                ++progression_index;
             }
-            compute_pipeline.push_constants.delta_time = delta_time_s;
-            compute_pipeline.push_constants.progression_index = progression_index;
-            cmd_buffer.pushConstants<ComputePipeline::PushConstants>(
-                compute_pipeline.layout.get(), vk::ShaderStageFlagBits::eCompute, 0, compute_pipeline.push_constants);
-
-
-            cmd_buffer.bindDescriptorSets(
-                vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
-            cmd_buffer.dispatch(W, H, 1);
-
-            //----------------------------------------------------------------------
-            // Graphics dispatch
-
-            cmd_buffer.pipelineBarrier(
-                vk::PipelineStageFlagBits::eComputeShader,
-                vk::PipelineStageFlagBits::eFragmentShader,
-                vk::DependencyFlagBits::eByRegion,
-                {},
-                {},
-                vk::ImageMemoryBarrier{}
-                    .setImage(image)
-                    .setOldLayout(vk::ImageLayout::eGeneral)
-                    .setNewLayout(vk::ImageLayout::eGeneral)
-                    .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
-                    .setSubresourceRange(vk::ImageSubresourceRange{}
-                                             .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                                             .setBaseMipLevel(0)
-                                             .setLayerCount(1)
-                                             .setLevelCount(1)
-                                             .setBaseArrayLayer(0)));
-
-            FramebufferKey fb_key;
-            fb_key.render_pass = graphics_pipeline.render_pass.get();
-            fb_key.extents = glm::ivec2(W, H);
-            fb_key.attachments.push_back(frame.get_image_view());
-
-            cmd_buffer.beginRenderPass(
-                vk::RenderPassBeginInfo{}
-                    .setRenderPass(graphics_pipeline.render_pass.get())
-                    .setRenderArea(vk::Rect2D({0, 0}, {W, H}))
-                    .setClearValues(vk::ClearValue{}.setColor(vk::ClearColorValue{}.setFloat32({0, 1, 0, 0})))
-                    .setFramebuffer(device.get_framebuffer(fb_key)),
-                vk::SubpassContents::eInline);
-            cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.pipeline.get());
-            cmd_buffer.bindDescriptorSets(
-                vk::PipelineBindPoint::eGraphics, graphics_pipeline.layout.get(), 0, ds.front(), {});
-            cmd_buffer.draw(3, 1, 0, 0);
-
-            // Render to internal data structures, then render those to to Vulkan.
-            ImGui::Render();
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buffer);
-
-            cmd_buffer.endRenderPass();
-
-            ++progression_index;
         }
+
         device.get().waitIdle();
 
         ImGui_ImplVulkan_DestroyFontUploadObjects();
         ImGui_ImplVulkan_Shutdown();
         ImGui_ImplGlfw_Shutdown();
 
+        // We must do this before the Device is destroyed.
+        window.destroy_swap_chain();
     } catch (vk::SystemError &err) {
         std::cerr << "vk::SystemError: " << err.what() << "\n";
         exit(-1);
