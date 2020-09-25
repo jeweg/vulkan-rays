@@ -14,6 +14,7 @@ set(sources
 	src/window.hpp
 	src/window.cpp
 	src/gui_handler.hpp
+	shaders/common.comp # Not compiled, just included.
 )
 
 set(glsl_sources

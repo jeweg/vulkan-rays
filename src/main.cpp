@@ -228,19 +228,14 @@ int main()
             vk::UniqueDescriptorSetLayout dsl;
             vk::UniqueDescriptorSet ds;
 
-
             // TODO: there's still something wrong here.
-            // If I move the view_transform to the end of the struct
-            // declaration, it doesn't work.
-            // Here I attempt to pad everything to 16-byte boundaries for compatibility
-            // with GLSL, but apparently this isn't enough.
+            // If I move the view_transform to the end of the struct declaration,
+            // things break.
             struct PushConstants
             {
-                glm::mat4 view_to_world_transform = glm::mat4(1);
-                uint32_t progression_index = 0;
-                uint32_t padding1[3];
-                float delta_time = 0.f;
-                uint32_t padding2[3];
+                alignas(16) glm::mat4 view_to_world_transform = glm::mat4(1);
+                alignas(4) uint32_t progression_index = 0;
+                alignas(4) float delta_time = 0.f;
             } push_constants;
 
             struct Sphere
@@ -253,11 +248,10 @@ int main()
 
             struct UBO
             {
-                float exposure = 1.3f;
-                bool apply_aces = true;
-                float gamma_factor = 1.f;
-                float padding1[1];
-                std::array<Sphere, 6> spheres;
+                alignas(4) float exposure = 1.3f;
+                alignas(4) bool apply_aces = true;
+                alignas(4) float gamma_factor = 1.f;
+                alignas(16) std::array<Sphere, 6> spheres;
             } *ubo_data = nullptr;
             VmaBuffer ubo;
         } compute_pipeline;
