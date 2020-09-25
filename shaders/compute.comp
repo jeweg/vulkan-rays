@@ -12,6 +12,9 @@ struct Sphere
 
 layout(binding = 1) uniform UniformBufferObject
 {
+	float exposure;
+	bool apply_aces;
+	float gamma_factor;
 	Sphere spheres[6];
 } ubo;
 
@@ -135,15 +138,30 @@ void main()
 	vec2 offset = eval_r2_sequence(progression_index);
 	make_primary_ray(offset, ray);
 
-	vec3 color = compute_color_for_ray(ray);
-	color = aces_tone_mapping(color);
+	vec3 linear_color = compute_color_for_ray(ray);
+
+
+	// Apply Reinhard tone mapping
+	linear_color *= ubo.exposure;
+	linear_color = linear_color / (vec3(1.0) + linear_color);
+
+	if (ubo.apply_aces) {
+		// Apply ACES tone mapping
+		linear_color = aces_tone_mapping(linear_color);
+	}
+
+	// Apply a gamma correction. Since we output linear color into an sRGB target,
+	// the system will apply proper gamma correction. We can effectively modify
+	// that system gamma with a factor (applying pow(color, 1/gamma) twice will
+	// result in pow(color, 1/(system_gamma * gamma_factor))).
+	linear_color = pow(linear_color, vec3(1.0 / ubo.gamma_factor));
 
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
 	// Branchless condition: if we just started a progression, we treat
 	// the accumulation count as 0. This will overwrite the full result with our
 	// color, saving us an image clear.
 	float accum_count = accum_color.a * float(progression_index > 0);
-	vec3 new_accum_rgb = (accum_count * accum_color.rgb + color) / (accum_count + 1);
+	vec3 new_accum_rgb = (accum_count * accum_color.rgb + linear_color) / (accum_count + 1);
 	new_accum_rgb = min(new_accum_rgb, vec3(1));
 
 	// Not that we can output linear color. We render into an sRGB attachment

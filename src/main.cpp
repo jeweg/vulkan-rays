@@ -234,17 +234,14 @@ int main()
             // declaration, it doesn't work.
             // Here I attempt to pad everything to 16-byte boundaries for compatibility
             // with GLSL, but apparently this isn't enough.
-            // The pragma doesn't make a difference.
-            //#pragma pack(push, 1)
             struct PushConstants
             {
                 glm::mat4 view_to_world_transform = glm::mat4(1);
                 uint32_t progression_index = 0;
-                uint32_t dummy1[3];
+                uint32_t padding1[3];
                 float delta_time = 0.f;
-                uint32_t dummy2[3];
+                uint32_t padding2[3];
             } push_constants;
-            //#pragma pack(pop)
 
             struct Sphere
             {
@@ -256,9 +253,12 @@ int main()
 
             struct UBO
             {
+                float exposure = 1.3f;
+                bool apply_aces = true;
+                float gamma_factor = 1.f;
+                float padding1[1];
                 std::array<Sphere, 6> spheres;
-            };
-            UBO *ubo_data = nullptr;
+            } *ubo_data = nullptr;
             VmaBuffer ubo;
         } compute_pipeline;
 
@@ -271,7 +271,8 @@ int main()
                     .setUsage(vk::BufferUsageFlagBits::eUniformBuffer)
                     .setSharingMode(vk::SharingMode::eExclusive)
                     .setSize(sizeof(ComputePipeline::UBO))));
-            compute_pipeline.ubo_data = static_cast<ComputePipeline::UBO *>(compute_pipeline.ubo.mapped_data());
+            compute_pipeline.ubo_data =
+                new (static_cast<ComputePipeline::UBO *>(compute_pipeline.ubo.mapped_data())) ComputePipeline::UBO;
 
             vk::UniqueShaderModule compute_shader =
                 load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/compute.comp.spirv");
@@ -596,6 +597,8 @@ int main()
         uint32_t progression_index = 0;
         glm::mat4 last_rendered_view_transform;
 
+        auto restart_progression = [&progression_index]() { progression_index = 0; };
+
         while (!window.should_close()) {
             auto this_time = std::chrono::high_resolution_clock::now();
             uint64_t delta_time_mus =
@@ -607,7 +610,7 @@ int main()
             if (frame.is_valid()) {
                 if (update_size_dependent_resource(
                         window.get_extent())) { // A new image size means we must restart progression
-                    progression_index = 0;
+                    restart_progression();
                 }
 
                 vk::CommandBuffer cmd_buffer = frame.get_cmd_buffer(Device::Queue::Graphics);
@@ -617,13 +620,19 @@ int main()
 
                 auto gui_frame = gui_handler.new_frame(cmd_buffer);
 
-                /*
                 // ImGui::ShowDemoWindow();
                 ImGui::Begin("Controls", nullptr, 0);
-                static float f1;
-                ImGui::SliderFloat("Exposure", &f1, 0.1f, 20.0f, "%.2f");
+                if (ImGui::SliderFloat(
+                        "Reinhard exposure", &compute_pipeline.ubo_data->exposure, 0.1f, 10.0f, "%.1f")) {
+                    restart_progression();
+                };
+                if (ImGui::Checkbox("Apply ACES filmic tone mapping", &compute_pipeline.ubo_data->apply_aces)) {
+                    restart_progression();
+                };
+                if (ImGui::SliderFloat("Gamma factor", &compute_pipeline.ubo_data->gamma_factor, 0.1f, 2.f, "%.1f")) {
+                    restart_progression();
+                };
                 ImGui::End();
-                */
 
                 //----------------------------------------------------------------------
                 // Compute dispatch
@@ -675,8 +684,7 @@ int main()
                         glm::inverse(glm::lookAt(glm::vec3(eye), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0)));
 
                     if (last_rendered_view_transform != compute_pipeline.push_constants.view_to_world_transform) {
-                        // Progression must start anew.
-                        progression_index = 0;
+                        restart_progression();
                     }
                     last_rendered_view_transform = compute_pipeline.push_constants.view_to_world_transform;
                 }
