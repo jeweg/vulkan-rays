@@ -4,12 +4,10 @@
 #include "utils.hpp"
 #include "device.hpp"
 #include "swap_chain.hpp"
+#include "window.hpp"
 #include "build_info.hpp"
+#include "gui_handler.hpp"
 #include "debugbreak.h"
-
-#include "imgui.h"
-#include "imgui_impl_vulkan.h"
-#include "imgui_impl_glfw.h"
 
 #define GLM_FORCE_SWIZZLE
 #include "glm/vec2.hpp"
@@ -43,9 +41,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_callback(
     std::cerr << "[" << vk::to_string(static_cast<vk::DebugUtilsMessageSeverityFlagBitsEXT>(message_severity)) << "]"
               << "(" << vk::to_string(static_cast<vk::DebugUtilsMessageTypeFlagBitsEXT>(message_types)) << ") "
               << pCallbackData->pMessage << "\n";
-
     if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) { debug_break(); }
-
     return VK_TRUE;
 }
 
@@ -106,6 +102,7 @@ static void cursor_position_callback(GLFWwindow *window, double xpos, double ypo
     }
 }
 
+
 static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods)
 {
     if (!ImGui::GetIO().WantCaptureMouse) {
@@ -116,79 +113,11 @@ static void mouse_button_callback(GLFWwindow *window, int button, int action, in
     }
 }
 
+
 static void scroll_callback(GLFWwindow *window, double xoffset, double yoffset)
 {
     if (!ImGui::GetIO().WantCaptureMouse) { g_wheel_dragger = static_cast<float>(yoffset); }
 }
-
-
-class Window
-{
-    GLFWwindow *_glfw_window = nullptr;
-    vk::Instance _vk_instance;
-    VkSurfaceKHR _vk_surface = VK_NULL_HANDLE;
-    std::unique_ptr<SwapChain> _swap_chain;
-    uint32_t _width = -1;
-    uint32_t _height = -1;
-
-public:
-    Window(vk::Instance vk_instance, uint32_t w, uint32_t h, const char *title) :
-        _vk_instance(vk_instance), _width(w), _height(h)
-    {
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        _glfw_window = glfwCreateWindow(w, h, title, nullptr, nullptr);
-        ASSUME(_glfw_window);
-        glfwSetWindowUserPointer(_glfw_window, this);
-        check_vk_result(glfwCreateWindowSurface(_vk_instance, _glfw_window, nullptr, &_vk_surface));
-
-        glfwSetFramebufferSizeCallback(_glfw_window, &window_resized_callback);
-    }
-
-    ~Window()
-    {
-        if (_vk_surface) { vkDestroySurfaceKHR(_vk_instance, _vk_surface, nullptr); }
-        if (_glfw_window) { glfwDestroyWindow(_glfw_window); }
-    }
-
-    vk::SurfaceKHR get_surface() const { return _vk_surface; }
-    GLFWwindow *get_glfw_window() { return _glfw_window; }
-    bool should_close() { return glfwWindowShouldClose(_glfw_window); }
-
-    vk::Extent2D get_extent() const { return vk::Extent2D(_width, _height); }
-    uint32_t get_width() const { return _width; }
-    uint32_t get_height() const { return _height; }
-
-    void make_swap_chain(const Device &device, bool want_vsync = true, bool want_limiter = true)
-    {
-        _swap_chain = std::make_unique<SwapChain>(device, _vk_surface, _width, _height, want_vsync, want_limiter);
-    }
-
-    SwapChain &get_swap_chain()
-    {
-        ASSUME(_swap_chain);
-        return *_swap_chain;
-    }
-
-    void destroy_swap_chain() { _swap_chain.reset(); }
-
-private:
-    void on_resized(int w, int h)
-    {
-        _width = w;
-        _height = h;
-        // We might not wanna resize right away, just take notice of the fact that
-        // stuff has to be recreated. We only want to actually recreate once we need it.
-        // The size might change multiple times before we actually need the swap chain again.
-        // But we can do let SwapChain worry about its own laziness.
-        if (_swap_chain) { _swap_chain->set_extent(w, h); }
-    }
-
-    static void window_resized_callback(GLFWwindow *window, int w, int h)
-    {
-        ASSUME(glfwGetWindowUserPointer(window));
-        static_cast<Window *>(glfwGetWindowUserPointer(window))->on_resized(w, h);
-    }
-};
 
 int main()
 {
@@ -275,196 +204,30 @@ int main()
         Device device(instance.get(), phys_device, window.get_surface());
         window.make_swap_chain(device);
 
-        //----------------------------------------------------------------------
-        // Create offscreen image
-
-        constexpr vk::Format IMAGE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
-
-        VmaImage image = VmaImage(
-            device.get_vma_allocator(),
-            VMA_MEMORY_USAGE_GPU_ONLY,
-            vk::ImageCreateInfo{}
-                .setImageType(vk::ImageType::e2D)
-                .setExtent({INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 1})
-                .setMipLevels(1)
-                .setArrayLayers(1)
-                .setFormat(IMAGE_FORMAT)
-                .setTiling(vk::ImageTiling::eOptimal)
-                .setInitialLayout(vk::ImageLayout::eUndefined)
-                .setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
-                .setSamples(vk::SampleCountFlagBits::e1)
-                .setSharingMode(
-                    device.get_family_index(Device::Queue::Graphics)
-                            != device.get_family_index(Device::Queue::Compute) ?
-                        vk::SharingMode::eConcurrent :
-                        vk::SharingMode::eExclusive));
-
-        vk::UniqueImageView image_view = device.get().createImageViewUnique(
-            vk::ImageViewCreateInfo{}
-                .setImage(image)
-                .setFormat(IMAGE_FORMAT /*vk::Format::eR8G8B8A8Uint*/)
-                .setViewType(vk::ImageViewType::e2D)
-                .setSubresourceRange(vk::ImageSubresourceRange{}
-                                         .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                                         .setBaseMipLevel(0)
-                                         .setLayerCount(1)
-                                         .setLevelCount(1)
-                                         .setBaseArrayLayer(0)));
-
-        vk::UniqueSampler image_sampler = device.get().createSamplerUnique(vk::SamplerCreateInfo{});
+        GuiHandler gui_handler;
 
         //----------------------------------------------------------------------
-        // Shared pools and caches
+        // Static resources (not dependent on window size)
 
         vk::UniquePipelineCache pipeline_cache = device.get().createPipelineCacheUnique(vk::PipelineCacheCreateInfo{});
 
         vk::UniqueDescriptorPool descriptor_pool = device.get().createDescriptorPoolUnique(
-            vk::DescriptorPoolCreateInfo{}.setMaxSets(100).setPoolSizes(std::initializer_list<vk::DescriptorPoolSize>{
-                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100),
-                vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(100)}));
+            vk::DescriptorPoolCreateInfo{}
+                .setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
+                .setMaxSets(100)
+                .setPoolSizes(std::initializer_list<vk::DescriptorPoolSize>{
+                    vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100),
+                    vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(100)}));
 
-        //----------------------------------------------------------------------
-        // Graphics pipeline
-
-        struct
-        {
-            vk::UniquePipeline pipeline;
-            vk::UniquePipelineLayout layout;
-            vk::UniqueDescriptorSetLayout dsl;
-            vk::UniqueRenderPass render_pass;
-        } graphics_pipeline;
-
-        {
-            graphics_pipeline.dsl =
-                device.get().createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
-                    vk::DescriptorSetLayoutBinding{}
-                        .setBinding(0)
-                        .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-                        .setDescriptorCount(1)
-                        .setStageFlags(vk::ShaderStageFlagBits::eFragment)));
-
-            graphics_pipeline.layout = device.get().createPipelineLayoutUnique(
-                vk::PipelineLayoutCreateInfo{}.setSetLayouts(graphics_pipeline.dsl.get()));
-
-            vk::UniqueShaderModule vertex_shader =
-                load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
-            vk::UniqueShaderModule fragment_shader =
-                load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/fs.frag.spirv");
-
-            graphics_pipeline.render_pass = device.get().createRenderPassUnique(
-                vk::RenderPassCreateInfo{}
-                    .setAttachments(vk::AttachmentDescription{}
-                                        .setFormat(window.get_swap_chain().get_format())
-                                        .setSamples(vk::SampleCountFlagBits::e1)
-                                        .setLoadOp(vk::AttachmentLoadOp::eClear)
-                                        .setStoreOp(vk::AttachmentStoreOp::eStore)
-                                        .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
-                                        .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
-                                        .setInitialLayout(vk::ImageLayout::eUndefined)
-                                        .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
-                    //.setFinalLayout(vk::ImageLayout::eColorAttachmentOptimal))
-                    .setSubpasses(vk::SubpassDescription{}
-                                      .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
-                                      .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
-                                          vk::ImageLayout::eColorAttachmentOptimal)))
-                    .setDependencies(
-                        vk::SubpassDependency{}
-                            .setSrcSubpass(VK_SUBPASS_EXTERNAL)
-                            .setDstSubpass(0)
-                            .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                            .setSrcAccessMask({})
-                            .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                            .setDstAccessMask(
-                                // TODO: probably no read access necessary here!
-                                vk::AccessFlagBits::eColorAttachmentRead | vk::AccessFlagBits::eColorAttachmentWrite)));
-
-            std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
-                vk::PipelineShaderStageCreateInfo{}
-                    .setStage(vk::ShaderStageFlagBits::eVertex)
-                    .setModule(vertex_shader.get())
-                    .setPName("main"),
-                vk::PipelineShaderStageCreateInfo{}
-                    .setStage(vk::ShaderStageFlagBits::eFragment)
-                    .setModule(fragment_shader.get())
-                    .setPName("main")};
-            auto vertex_input_state = vk::PipelineVertexInputStateCreateInfo{};
-            auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
-                                            .setTopology(vk::PrimitiveTopology::eTriangleList)
-                                            .setPrimitiveRestartEnable(false);
-            auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(
-                std::initializer_list<vk::DynamicState>{vk::DynamicState::eViewport, vk::DynamicState::eScissor});
-            auto viewport_state =
-                vk::PipelineViewportStateCreateInfo{}
-                    .setViewports(vk::Viewport(0, 0, INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 0, 1))
-                    .setScissors(vk::Rect2D({0, 0}, {INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT}));
-            auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
-                                           .setPolygonMode(vk::PolygonMode::eFill)
-                                           .setCullMode(vk::CullModeFlagBits::eNone)
-                                           .setFrontFace(vk::FrontFace::eClockwise)
-                                           .setDepthClampEnable(false)
-                                           .setRasterizerDiscardEnable(false)
-                                           .setDepthBiasEnable(false)
-                                           .setLineWidth(1.f);
-            auto multisample_state = vk::PipelineMultisampleStateCreateInfo{}
-                                         .setRasterizationSamples(vk::SampleCountFlagBits::e1)
-                                         .setSampleShadingEnable(false);
-            auto depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo{}
-                                           .setDepthTestEnable(true)
-                                           .setDepthWriteEnable(true)
-                                           .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
-                                           .setBack(vk::StencilOpState{}
-                                                        .setFailOp(vk::StencilOp::eKeep)
-                                                        .setPassOp(vk::StencilOp::eKeep)
-                                                        .setCompareOp(vk::CompareOp::eAlways))
-                                           .setFront(vk::StencilOpState{}
-                                                         .setFailOp(vk::StencilOp::eKeep)
-                                                         .setPassOp(vk::StencilOp::eKeep)
-                                                         .setCompareOp(vk::CompareOp::eAlways));
-            auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(
-                vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
-                    vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
-                    | vk::ColorComponentFlagBits::eA));
-
-            graphics_pipeline.pipeline = device.get().createGraphicsPipelineUnique(
-                pipeline_cache.get(),
-                vk::GraphicsPipelineCreateInfo{}
-                    .setLayout(graphics_pipeline.layout.get())
-                    .setRenderPass(graphics_pipeline.render_pass.get())
-                    .setStages(shader_stages)
-                    .setPVertexInputState(&vertex_input_state)
-                    .setPInputAssemblyState(&input_assembly_state)
-                    .setPDynamicState(&dyn_state)
-                    .setPViewportState(&viewport_state)
-                    .setPRasterizationState(&rasterization_state)
-                    .setPMultisampleState(&multisample_state)
-                    .setPDepthStencilState(&depth_stencil_state)
-                    .setPColorBlendState(&color_blend_state));
-        }
-        std::vector<vk::DescriptorSet> ds =
-            device.get().allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                    .setDescriptorPool(descriptor_pool.get())
-                                                    .setDescriptorSetCount(1)
-                                                    .setSetLayouts(graphics_pipeline.dsl.get()));
-        device.get().updateDescriptorSets(
-            vk::WriteDescriptorSet{}
-                .setDstSet(ds.front())
-                .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
-                .setDstBinding(0)
-                .setDescriptorCount(1)
-                .setImageInfo(vk::DescriptorImageInfo{}
-                                  .setImageLayout(vk::ImageLayout::eGeneral)
-                                  .setImageView(image_view.get())
-                                  .setSampler(image_sampler.get())),
-            {});
-
-        //----------------------------------------------------------------------
-        // Compute pipeline
+        vk::UniqueSampler image_sampler = device.get().createSamplerUnique(vk::SamplerCreateInfo{});
 
         struct ComputePipeline
         {
             vk::UniquePipeline pipeline;
             vk::UniquePipelineLayout layout;
             vk::UniqueDescriptorSetLayout dsl;
+            vk::UniqueDescriptorSet ds;
+
 
             // TODO: there's still something wrong here.
             // If I move the view_transform to the end of the struct
@@ -527,8 +290,6 @@ int main()
                 device.get().createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
                     std::initializer_list<vk::DescriptorSetLayoutBinding>{dslb_0, dslb_1}));
 
-            auto foo = sizeof(ComputePipeline::PushConstants);
-
             compute_pipeline.layout = device.get().createPipelineLayoutUnique(
                 vk::PipelineLayoutCreateInfo{}
                     .setPushConstantRanges(vk::PushConstantRange{}
@@ -545,34 +306,14 @@ int main()
                                   .setModule(compute_shader.get())
                                   .setPName("main"))
                     .setLayout(compute_pipeline.layout.get()));
-        }
 
-        std::vector<vk::DescriptorSet> compute_ds =
-            device.get().allocateDescriptorSets(vk::DescriptorSetAllocateInfo{}
-                                                    .setDescriptorPool(descriptor_pool.get())
-                                                    .setDescriptorSetCount(1)
-                                                    .setSetLayouts(compute_pipeline.dsl.get()));
-        device.get().updateDescriptorSets(
-            std::initializer_list<vk::WriteDescriptorSet>{
-                vk::WriteDescriptorSet{}
-                    .setDstSet(compute_ds.front())
-                    .setDescriptorType(vk::DescriptorType::eStorageImage)
-                    .setDstBinding(0)
-                    .setDescriptorCount(1)
-                    .setImageInfo(vk::DescriptorImageInfo{}
-                                      .setImageLayout(vk::ImageLayout::eGeneral)
-                                      .setImageView(image_view.get())
-                                      .setSampler(image_sampler.get())),
-                vk::WriteDescriptorSet{}
-                    .setDstSet(compute_ds.front())
-                    .setDescriptorType(vk::DescriptorType::eUniformBuffer)
-                    .setDstBinding(1)
-                    .setDescriptorCount(1)
-                    .setBufferInfo(vk::DescriptorBufferInfo{}
-                                       .setBuffer(compute_pipeline.ubo)
-                                       .setOffset(0)
-                                       .setRange(sizeof(ComputePipeline::UBO)))},
-            {});
+            std::vector<vk::UniqueDescriptorSet> descriptor_sets =
+                device.get().allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo{}
+                                                              .setDescriptorPool(descriptor_pool.get())
+                                                              .setDescriptorSetCount(1)
+                                                              .setSetLayouts(compute_pipeline.dsl.get()));
+            compute_pipeline.ds = std::move(descriptor_sets.front());
+        }
 
         //----------------------------------------------------------------------
         // Define world
@@ -620,32 +361,228 @@ int main()
             sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
         }
 
-        // ----------------------------------------------------------------------
-        // More setup for GLFW and ImGui
+        // Describe world to compute pipeline.
 
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
+        device.get().updateDescriptorSets(
+            std::initializer_list<vk::WriteDescriptorSet>{
+                vk::WriteDescriptorSet{}
+                    .setDstSet(compute_pipeline.ds.get())
+                    .setDescriptorType(vk::DescriptorType::eUniformBuffer)
+                    .setDstBinding(1)
+                    .setDescriptorCount(1)
+                    .setBufferInfo(vk::DescriptorBufferInfo{}
+                                       .setBuffer(compute_pipeline.ubo)
+                                       .setOffset(0)
+                                       .setRange(sizeof(ComputePipeline::UBO)))},
+            {});
+
+
+        //----------------------------------------------------------------------
+        // Size-dependent resources are (re)created on demand
+
+        VmaImage image;
+        vk::UniqueImageView image_view;
+
+        struct
         {
-            ImGui_ImplVulkan_InitInfo ci = {0};
-            ci.Instance = instance.get();
-            ci.PhysicalDevice = phys_device;
-            ci.Device = device.get();
-            ci.QueueFamily = device.get_family_index(Device::Queue::Graphics);
-            ci.Queue = device.get_queue(Device::Queue::Graphics);
-            ci.PipelineCache = pipeline_cache.get();
-            ci.DescriptorPool = descriptor_pool.get();
-            ci.MinImageCount = window.get_swap_chain().get_num_frames_in_flight();
-            ci.ImageCount = ci.MinImageCount;
+            vk::UniquePipeline pipeline;
+            vk::UniquePipelineLayout layout;
+            vk::UniqueRenderPass render_pass;
+            vk::UniqueDescriptorSetLayout dsl;
+            vk::UniqueDescriptorSet ds;
+        } graphics_pipeline;
 
-            ci.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-            ci.CheckVkResultFn = [](VkResult result) { ASSUME(result == VK_SUCCESS); };
-            ASSUME(ImGui_ImplVulkan_Init(&ci, graphics_pipeline.render_pass.get()));
+        auto update_size_dependent_resource = [&](const vk::Extent2D &extent) {
+            static vk::Extent2D last_extent;
 
-            device.run_commands(
-                Device::Queue::Graphics, [](vk::CommandBuffer cb) { ImGui_ImplVulkan_CreateFontsTexture(cb); });
+            if (last_extent == extent) {
+                // Nothing to do here.
+                return false;
+            }
+            last_extent = extent;
 
-            ASSUME(ImGui_ImplGlfw_InitForVulkan(window.get_glfw_window(), true));
-        }
+            constexpr vk::Format IMAGE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
+
+            image = VmaImage(
+                device.get_vma_allocator(),
+                VMA_MEMORY_USAGE_GPU_ONLY,
+                vk::ImageCreateInfo{}
+                    .setImageType(vk::ImageType::e2D)
+                    .setExtent(vk::Extent3D(extent.width, extent.height, 1))
+                    .setMipLevels(1)
+                    .setArrayLayers(1)
+                    .setFormat(IMAGE_FORMAT)
+                    .setTiling(vk::ImageTiling::eOptimal)
+                    .setInitialLayout(vk::ImageLayout::eUndefined)
+                    .setUsage(vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled)
+                    .setSamples(vk::SampleCountFlagBits::e1)
+                    .setSharingMode(
+                        device.get_family_index(Device::Queue::Graphics)
+                                != device.get_family_index(Device::Queue::Compute) ?
+                            vk::SharingMode::eConcurrent :
+                            vk::SharingMode::eExclusive));
+            image_view = device.get().createImageViewUnique(
+                vk::ImageViewCreateInfo{}
+                    .setImage(image)
+                    .setFormat(IMAGE_FORMAT)
+                    .setViewType(vk::ImageViewType::e2D)
+                    .setSubresourceRange(vk::ImageSubresourceRange{}
+                                             .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                                             .setBaseMipLevel(0)
+                                             .setLayerCount(1)
+                                             .setLevelCount(1)
+                                             .setBaseArrayLayer(0)));
+
+            device.get().updateDescriptorSets(
+                std::initializer_list<vk::WriteDescriptorSet>{
+                    vk::WriteDescriptorSet{}
+                        .setDstSet(compute_pipeline.ds.get())
+                        .setDescriptorType(vk::DescriptorType::eStorageImage)
+                        .setDstBinding(0)
+                        .setDescriptorCount(1)
+                        .setImageInfo(vk::DescriptorImageInfo{}
+                                          .setImageLayout(vk::ImageLayout::eGeneral)
+                                          .setImageView(image_view.get())
+                                          .setSampler(image_sampler.get()))},
+                {});
+
+            {
+                graphics_pipeline.dsl =
+                    device.get().createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
+                        vk::DescriptorSetLayoutBinding{}
+                            .setBinding(0)
+                            .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+                            .setDescriptorCount(1)
+                            .setStageFlags(vk::ShaderStageFlagBits::eFragment)));
+
+                graphics_pipeline.layout = device.get().createPipelineLayoutUnique(
+                    vk::PipelineLayoutCreateInfo{}.setSetLayouts(graphics_pipeline.dsl.get()));
+
+                vk::UniqueShaderModule vertex_shader =
+                    load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/vs.vert.spirv");
+                vk::UniqueShaderModule fragment_shader =
+                    load_shader(device.get(), std::string(build_info::PROJECT_BINARY_DIR) + "/shaders/fs.frag.spirv");
+
+                graphics_pipeline.render_pass = device.get().createRenderPassUnique(
+                    vk::RenderPassCreateInfo{}
+                        .setAttachments(vk::AttachmentDescription{}
+                                            .setFormat(window.get_swap_chain().get_format())
+                                            .setSamples(vk::SampleCountFlagBits::e1)
+                                            .setLoadOp(vk::AttachmentLoadOp::eClear)
+                                            .setStoreOp(vk::AttachmentStoreOp::eStore)
+                                            .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
+                                            .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
+                                            .setInitialLayout(vk::ImageLayout::eUndefined)
+                                            .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
+                        //.setFinalLayout(vk::ImageLayout::eColorAttachmentOptimal))
+                        .setSubpasses(vk::SubpassDescription{}
+                                          .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
+                                          .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
+                                              vk::ImageLayout::eColorAttachmentOptimal)))
+                        .setDependencies(vk::SubpassDependency{}
+                                             .setSrcSubpass(VK_SUBPASS_EXTERNAL)
+                                             .setDstSubpass(0)
+                                             .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                                             .setSrcAccessMask({})
+                                             .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
+                                             .setDstAccessMask(
+                                                 // TODO: probably no read access necessary here!
+                                                 vk::AccessFlagBits::eColorAttachmentRead
+                                                 | vk::AccessFlagBits::eColorAttachmentWrite)));
+
+                std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
+                    vk::PipelineShaderStageCreateInfo{}
+                        .setStage(vk::ShaderStageFlagBits::eVertex)
+                        .setModule(vertex_shader.get())
+                        .setPName("main"),
+                    vk::PipelineShaderStageCreateInfo{}
+                        .setStage(vk::ShaderStageFlagBits::eFragment)
+                        .setModule(fragment_shader.get())
+                        .setPName("main")};
+                auto vertex_input_state = vk::PipelineVertexInputStateCreateInfo{};
+                auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
+                                                .setTopology(vk::PrimitiveTopology::eTriangleList)
+                                                .setPrimitiveRestartEnable(false);
+                auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(
+                    std::initializer_list<vk::DynamicState>{vk::DynamicState::eViewport, vk::DynamicState::eScissor});
+                auto viewport_state =
+                    vk::PipelineViewportStateCreateInfo{}
+                        .setViewports(vk::Viewport(
+                            0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1))
+                        .setScissors(vk::Rect2D({0, 0}, extent));
+                auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
+                                               .setPolygonMode(vk::PolygonMode::eFill)
+                                               .setCullMode(vk::CullModeFlagBits::eNone)
+                                               .setFrontFace(vk::FrontFace::eClockwise)
+                                               .setDepthClampEnable(false)
+                                               .setRasterizerDiscardEnable(false)
+                                               .setDepthBiasEnable(false)
+                                               .setLineWidth(1.f);
+                auto multisample_state = vk::PipelineMultisampleStateCreateInfo{}
+                                             .setRasterizationSamples(vk::SampleCountFlagBits::e1)
+                                             .setSampleShadingEnable(false);
+                auto depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo{}
+                                               .setDepthTestEnable(true)
+                                               .setDepthWriteEnable(true)
+                                               .setDepthCompareOp(vk::CompareOp::eLessOrEqual)
+                                               .setBack(vk::StencilOpState{}
+                                                            .setFailOp(vk::StencilOp::eKeep)
+                                                            .setPassOp(vk::StencilOp::eKeep)
+                                                            .setCompareOp(vk::CompareOp::eAlways))
+                                               .setFront(vk::StencilOpState{}
+                                                             .setFailOp(vk::StencilOp::eKeep)
+                                                             .setPassOp(vk::StencilOp::eKeep)
+                                                             .setCompareOp(vk::CompareOp::eAlways));
+                auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(
+                    vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
+                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+                        | vk::ColorComponentFlagBits::eA));
+
+                graphics_pipeline.pipeline = device.get().createGraphicsPipelineUnique(
+                    pipeline_cache.get(),
+                    vk::GraphicsPipelineCreateInfo{}
+                        .setLayout(graphics_pipeline.layout.get())
+                        .setRenderPass(graphics_pipeline.render_pass.get())
+                        .setStages(shader_stages)
+                        .setPVertexInputState(&vertex_input_state)
+                        .setPInputAssemblyState(&input_assembly_state)
+                        .setPDynamicState(&dyn_state)
+                        .setPViewportState(&viewport_state)
+                        .setPRasterizationState(&rasterization_state)
+                        .setPMultisampleState(&multisample_state)
+                        .setPDepthStencilState(&depth_stencil_state)
+                        .setPColorBlendState(&color_blend_state));
+
+                std::vector<vk::UniqueDescriptorSet> descriptor_sets =
+                    device.get().allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo{}
+                                                                  .setDescriptorPool(descriptor_pool.get())
+                                                                  .setDescriptorSetCount(1)
+                                                                  .setSetLayouts(graphics_pipeline.dsl.get()));
+                graphics_pipeline.ds = std::move(descriptor_sets.front());
+
+                device.get().updateDescriptorSets(
+                    vk::WriteDescriptorSet{}
+                        .setDstSet(graphics_pipeline.ds.get())
+                        .setDescriptorType(vk::DescriptorType::eCombinedImageSampler)
+                        .setDstBinding(0)
+                        .setDescriptorCount(1)
+                        .setImageInfo(vk::DescriptorImageInfo{}
+                                          .setImageLayout(vk::ImageLayout::eGeneral)
+                                          .setImageView(image_view.get())
+                                          .setSampler(image_sampler.get())),
+                    {});
+
+                gui_handler.init(
+                    instance.get(),
+                    device,
+                    window,
+                    descriptor_pool.get(),
+                    pipeline_cache.get(),
+                    graphics_pipeline.render_pass.get());
+
+                return true;
+            }
+        };
 
         //----------------------------------------------------------------------
         // Render loop
@@ -666,22 +603,29 @@ int main()
             float delta_time_s = delta_time_mus / 1000000.0f;
             glfwPollEvents();
 
-            // ImGui::ShowDemoWindow();
-            /*
-            ImGui::Begin("Controls", nullptr, 0);
-            static float f1;
-            ImGui::SliderFloat("Exposure", &f1, 0.1f, 20.0f, "%.2f");
-            ImGui::End();
-            */
-
             SwapChain::FrameImage frame = window.get_swap_chain().begin_next_frame();
             if (frame.is_valid()) {
-                ImGui_ImplVulkan_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
-                ImGui::NewFrame();
+                if (update_size_dependent_resource(
+                        window.get_extent())) { // A new image size means we must restart progression
+                    progression_index = 0;
+                }
 
                 vk::CommandBuffer cmd_buffer = frame.get_cmd_buffer(Device::Queue::Graphics);
 
+                //----------------------------------------------------------------------
+                // Gui updates
+
+                auto gui_frame = gui_handler.new_frame(cmd_buffer);
+
+                /*
+                // ImGui::ShowDemoWindow();
+                ImGui::Begin("Controls", nullptr, 0);
+                static float f1;
+                ImGui::SliderFloat("Exposure", &f1, 0.1f, 20.0f, "%.2f");
+                ImGui::End();
+                */
+
+                //----------------------------------------------------------------------
                 // Compute dispatch
 
                 cmd_buffer.pipelineBarrier(
@@ -704,7 +648,6 @@ int main()
 
                 cmd_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, compute_pipeline.pipeline.get());
 
-                //----------------------------------------------------------------------
                 // Update push constants
                 {
                     auto &m = compute_pipeline.push_constants.view_to_world_transform;
@@ -747,8 +690,8 @@ int main()
 
 
                 cmd_buffer.bindDescriptorSets(
-                    vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_ds.front(), {});
-                cmd_buffer.dispatch(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, 1);
+                    vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_pipeline.ds.get(), {});
+                cmd_buffer.dispatch(window.get_width(), window.get_height(), 1);
 
                 //----------------------------------------------------------------------
                 // Graphics dispatch
@@ -771,8 +714,6 @@ int main()
                                                  .setLevelCount(1)
                                                  .setBaseArrayLayer(0)));
 
-                // TODO: after maximizing, the imageview we get from frame.get_image_view()
-                // seems to be invalid.
                 FramebufferKey fb_key;
                 fb_key.render_pass = graphics_pipeline.render_pass.get();
                 fb_key.extent = window.get_extent();
@@ -787,13 +728,22 @@ int main()
                     vk::SubpassContents::eInline);
                 cmd_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, graphics_pipeline.pipeline.get());
                 cmd_buffer.bindDescriptorSets(
-                    vk::PipelineBindPoint::eGraphics, graphics_pipeline.layout.get(), 0, ds.front(), {});
-                cmd_buffer.setViewport(0, vk::Viewport(0, 0, window.get_width(), window.get_height(), 0, 1));
+                    vk::PipelineBindPoint::eGraphics,
+                    graphics_pipeline.layout.get(),
+                    0,
+                    graphics_pipeline.ds.get(),
+                    {});
+                cmd_buffer.setViewport(
+                    0,
+                    vk::Viewport(
+                        0, 0, static_cast<float>(window.get_width()), static_cast<float>(window.get_height()), 0, 1));
                 cmd_buffer.setScissor(0, vk::Rect2D({0, 0}, window.get_extent()));
                 cmd_buffer.draw(3, 1, 0, 0);
 
-                ImGui::Render();
-                ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd_buffer);
+                // This will be called by the d'tor, but then we'd need to have
+                // another block to get it fall out of scope before the end of the command buffer.. meh,
+                // easiert to end the gui frame early.
+                gui_frame.render();
 
                 cmd_buffer.endRenderPass();
 
@@ -802,10 +752,6 @@ int main()
         }
 
         device.get().waitIdle();
-
-        ImGui_ImplVulkan_DestroyFontUploadObjects();
-        ImGui_ImplVulkan_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
 
         // We must do this before the Device is destroyed.
         window.destroy_swap_chain();

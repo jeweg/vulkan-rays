@@ -11,6 +11,9 @@ set(sources
 	src/device.cpp
 	src/swap_chain.hpp
 	src/swap_chain.cpp
+	src/window.hpp
+	src/window.cpp
+	src/gui_handler.hpp
 )
 
 set(glsl_sources

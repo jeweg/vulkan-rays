@@ -89,17 +89,16 @@ struct VmaImage
     }
     VmaImage(const VmaImage &) = delete;
     VmaImage &operator=(const VmaImage &) = delete;
-    VmaImage(VmaImage &&other) noexcept :
-        vma_allocator(other.vma_allocator), vma_allocation(other.vma_allocation), image(other.image)
-    {
-        other.vma_allocation = VK_NULL_HANDLE;
-        other.image = VK_NULL_HANDLE;
-    }
+    VmaImage(VmaImage &&other) noexcept { *this = std::move(other); }
     VmaImage &operator=(VmaImage &&other) noexcept
     {
-        vma_allocator = other.vma_allocator;
-        vma_allocation = other.vma_allocation;
-        image = other.image;
+        if (image && image != other.image) { vmaDestroyImage(vma_allocator, image, vma_allocation); }
+
+        vma_allocator = std::move(other.vma_allocator);
+        vma_allocation = std::move(other.vma_allocation);
+        image = std::move(other.image);
+
+        // Leave other in a valid moved-from state
         other.vma_allocation = VK_NULL_HANDLE;
         other.image = VK_NULL_HANDLE;
         return *this;
@@ -133,32 +132,28 @@ struct VmaBuffer
     }
     VmaBuffer(const VmaBuffer &) = delete;
     VmaBuffer &operator=(const VmaBuffer &) = delete;
-    VmaBuffer(VmaBuffer &&other) noexcept :
-        vma_allocator(other.vma_allocator),
-        vma_allocation(other.vma_allocation),
-        alloc_info(other.alloc_info),
-        buffer(other.buffer)
-    {
-        other.vma_allocation = VK_NULL_HANDLE;
-        other.buffer = VK_NULL_HANDLE;
-    }
+    VmaBuffer(VmaBuffer &&other) noexcept { *this = std::move(other); }
     VmaBuffer &operator=(VmaBuffer &&other) noexcept
     {
-        vma_allocator = other.vma_allocator;
-        vma_allocation = other.vma_allocation;
-        alloc_info = other.alloc_info;
-        buffer = other.buffer;
+        if (buffer && buffer != other.buffer) { vmaDestroyBuffer(vma_allocator, buffer, vma_allocation); }
+
+        vma_allocator = std::move(other.vma_allocator);
+        vma_allocation = std::move(other.vma_allocation);
+        alloc_info = std::move(other.alloc_info);
+        buffer = std::move(other.buffer);
+
+        // Leave other in a valid moved-from state
         other.vma_allocation = VK_NULL_HANDLE;
         other.buffer = VK_NULL_HANDLE;
         return *this;
     }
 
-    void *mapped_data() { return alloc_info.pMappedData; }
-
     ~VmaBuffer() noexcept
     {
         if (buffer) { vmaDestroyBuffer(vma_allocator, buffer, vma_allocation); }
     }
+
+    void *mapped_data() { return alloc_info.pMappedData; }
 
     operator vk::Buffer() const { return buffer; }
     explicit operator VkBuffer() const { return buffer; }

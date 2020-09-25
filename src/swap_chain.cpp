@@ -124,8 +124,6 @@ void SwapChain::recreate()
         extent = surface_caps.currentExtent;
     }
 
-    std::cerr << "recreating swapchain with extent " << extent.width << "x" << extent.height << "\n";
-
     _device.get().waitIdle();
     _frame_sequence.clear();
     _swapchain_image_views.clear();
