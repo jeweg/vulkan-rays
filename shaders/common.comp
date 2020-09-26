@@ -12,8 +12,8 @@ layout(push_constant) uniform PushConstantBlock
 
 //----------------------------------------------------------------------
 
-const float TWO_PI = 6.283185307179586476925286766559;
-const float INF_DIST = 999999;
+const float TWO_PI = 6.283185307179586476925286766559f;
+const float INF_DIST = 9999999999999999999.f;
 const float RAY_START_BIAS = 1e-4; // Prevents self-intersection 
 
 //----------------------------------------------------------------------
@@ -24,17 +24,8 @@ struct Ray
 	vec3 dir;
 };
 
-struct HitRecord
-{
-	float dist;
-	vec3 pt;
-	vec3 normal;
-	vec4 albedo_and_roughness;
-	vec4 emissive_and_ior;
-	vec4 specular_and_coefficient;
-};
-
 //----------------------------------------------------------------------
+// Random number generators
 
 // Pseudo-rng from https://blog.demofox.org/2020/05/25/casual-shadertoy-path-tracing-1-basic-camera-diffuse-emissive/
 uint rng_state;
@@ -110,109 +101,34 @@ void make_primary_ray(vec2 offset, out Ray out_ray)
 	//out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -eye_dist);
 	out_ray.origin = (PushConstants.view_to_world_transform * vec4(0, 0, 0, 1)).xyz;
 	out_ray.dir = (PushConstants.view_to_world_transform * vec4(center_pixel_dx, center_pixel_dy, -eye_dist, 0)).xyz;
+
+    // For simple ray-sphere situations this is not necessary,
+    // but later on it makes things easier.
+    out_ray.dir = normalize(out_ray.dir);
 }
 
 //----------------------------------------------------------------------
 
-/*
-
-// From Alan Wolfe /demofox
-bool TestQuadTrace(in Ray  rayPos, in vec3 rayDir, inout SRayHitInfo info, in vec3 a, in vec3 b, in vec3 c, in vec3 d)
+// From Peter Shirley's RTIOW page 17.
+float hit_sphere_shape(vec3 center, float radius, Ray r, float t_min, float t_max)
 {
-    // calculate normal and flip vertices order if needed
-    vec3 normal = normalize(cross(c-a, c-b));
-    if (dot(normal, rayDir) > 0.0f)
-    {
-        normal *= -1.0f;
-        
-		vec3 temp = d;
-        d = a;
-        a = temp;
-        
-        temp = b;
-        b = c;
-        c = temp;
-    }
-    
-    vec3 p = rayPos;
-    vec3 q = rayPos + rayDir;
-    vec3 pq = q - p;
-    vec3 pa = a - p;
-    vec3 pb = b - p;
-    vec3 pc = c - p;
-    
-    // determine which triangle to test against by testing against diagonal first
-    vec3 m = cross(pc, pq);
-    float v = dot(pa, m);
-    vec3 intersectPos;
-    if (v >= 0.0f)
-    {
-        // test against triangle a,b,c
-        float u = -dot(pb, m);
-        if (u < 0.0f) return false;
-        float w = ScalarTriple(pq, pb, pa);
-        if (w < 0.0f) return false;
-        float denom = 1.0f / (u+v+w);
-        u*=denom;
-        v*=denom;
-        w*=denom;
-        intersectPos = u*a+v*b+w*c;
-    }
-    else
-    {
-        vec3 pd = d - p;
-        float u = dot(pd, m);
-        if (u < 0.0f) return false;
-        float w = ScalarTriple(pq, pa, pd);
-        if (w < 0.0f) return false;
-        v = -v;
-        float denom = 1.0f / (u+v+w);
-        u*=denom;
-        v*=denom;
-        w*=denom;
-        intersectPos = u*a+v*d+w*c;
-    }
-    
-    float dist;
-    if (abs(rayDir.x) > 0.1f)
-    {
-        dist = (intersectPos.x - rayPos.x) / rayDir.x;
-    }
-    else if (abs(rayDir.y) > 0.1f)
-    {
-        dist = (intersectPos.y - rayPos.y) / rayDir.y;
-    }
-    else
-    {
-        dist = (intersectPos.z - rayPos.z) / rayDir.z;
-    }
-    
-	if (dist > c_minimumRayHitTime && dist < info.dist)
-    {
-        info.dist = dist;        
-        info.normal = normal;        
-        return true;
-    }    
-    
-    return false;
-} 
-*/
-
-
-// Returns a negative number if no hit.
-float hit_sphere_shape(vec3 center, float radius, Ray r)
-{
-	// From Peter Shirley's RTIOW.
 	vec3 oc = r.origin - center;
-	float a = dot(r.dir, r.dir);
-	float b = 2 * dot(oc, r.dir);
-	float c = dot(oc, oc) - radius*radius;
-	float discriminant = b*b - 4*a*c;
-	if (discriminant < 0) {
-		return -1;
-	} else {
-		return (-b - sqrt(discriminant)) / (2 * a);
-	}
+    float a = dot(r.dir, r.dir);
+    float b = dot(oc, r.dir);
+    float c = dot(oc, oc) - radius * radius;
+    float discriminant = b*b - a*c;
+    if (discriminant > 0) {
+		float root = sqrt(b*b - a*c);
+        float t = (-b - root) / a;
+        if (t < t_max && t > t_min) {
+			return t;
+        }
+        t = (-b + root) / a;
+        if (t < t_max && t > t_min) {
+			return t;
+        }
+    }
+    return -1;
 }
 
 
@@ -230,7 +146,7 @@ vec3 aces_tone_mapping(vec3 x)
 }
 
 
-// Schlick aproximation
+// Schlick aproximation to Fresnel coefficients
 float compute_fresnel_reflect_amount(float n1, float n2, vec3 normal, vec3 incident, float f0, float f90)
 {
         float r0 = (n1-n2) / (n1+n2);

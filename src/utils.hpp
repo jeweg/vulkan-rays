@@ -4,6 +4,7 @@
 #include "vk_mem_alloc.h"
 #include "vulkan/vulkan.hpp"
 #include "glm/vec2.hpp"
+#include "glm/gtc/type_ptr.hpp"
 #include <iostream>
 #include <fstream>
 #include <cstdlib>
@@ -163,3 +164,35 @@ struct VmaBuffer
     VmaAllocationInfo alloc_info;
     VkBuffer buffer = VK_NULL_HANDLE;
 };
+
+
+inline void foo()
+{
+    // Data from https://www.graphics.cornell.edu/online/box/data.html
+    // Y is up. The floor is at y = 0.
+    // Every 3 consecutive components make up a vertex, 4 of those a quadliteral.
+    // The order and number of quadliterals is
+    // 1x floor (holes skipped), 1x light, 1x ceiling, 1x back wall, 1x right all, 1x left wall,
+    // 5x short block, 5x tall block.
+    static constexpr float COORDS[] = {
+        552.8f, 0.0f,   0.0f,   0.0f,   0.0f,   0.0f,   0.0f,   0.0f,   559.2f, 549.6f, 0.0f,   559.2f, 343.0f, 548.8f,
+        227.0f, 343.0f, 548.8f, 332.0f, 213.0f, 548.8f, 332.0f, 213.0f, 548.8f, 227.0f, 556.0f, 548.8f, 0.0f,   556.0f,
+        548.8f, 559.2f, 0.0f,   548.8f, 559.2f, 0.0f,   548.8f, 0.0f,   549.6f, 0.0f,   559.2f, 0.0f,   0.0f,   559.2f,
+        0.0f,   548.8f, 559.2f, 556.0f, 548.8f, 559.2f, 0.0f,   0.0f,   559.2f, 0.0f,   0.0f,   0.0f,   0.0f,   548.8f,
+        0.0f,   0.0f,   548.8f, 559.2f, 552.8f, 0.0f,   0.0f,   549.6f, 0.0f,   559.2f, 556.0f, 548.8f, 559.2f, 556.0f,
+        548.8f, 0.0f,   130.0f, 165.0f, 65.0f,  82.0f,  165.0f, 225.0f, 240.0f, 165.0f, 272.0f, 290.0f, 165.0f, 114.0f,
+        290.0f, 0.0f,   114.0f, 290.0f, 165.0f, 114.0f, 240.0f, 165.0f, 272.0f, 240.0f, 0.0f,   272.0f, 130.0f, 0.0f,
+        65.0f,  130.0f, 165.0f, 65.0f,  290.0f, 165.0f, 114.0f, 290.0f, 0.0f,   114.0f, 82.0f,  0.0f,   225.0f, 82.0f,
+        165.0f, 225.0f, 130.0f, 165.0f, 65.0f,  130.0f, 0.0f,   65.0f,  240.0f, 0.0f,   272.0f, 240.0f, 165.0f, 272.0f,
+        82.0f,  165.0f, 225.0f, 82.0f,  0.0f,   225.0f, 423.0f, 330.0f, 247.0f, 265.0f, 330.0f, 296.0f, 314.0f, 330.0f,
+        456.0f, 472.0f, 330.0f, 406.0f, 423.0f, 0.0f,   247.0f, 423.0f, 330.0f, 247.0f, 472.0f, 330.0f, 406.0f, 472.0f,
+        0.0f,   406.0f, 472.0f, 0.0f,   406.0f, 472.0f, 330.0f, 406.0f, 314.0f, 330.0f, 456.0f, 314.0f, 0.0f,   456.0f,
+        314.0f, 0.0f,   456.0f, 314.0f, 330.0f, 456.0f, 265.0f, 330.0f, 296.0f, 265.0f, 0.0f,   296.0f, 265.0f, 0.0f,
+        296.0f, 265.0f, 330.0f, 296.0f, 423.0f, 330.0f, 247.0f, 423.0f, 0.0f,   247.0f,
+    };
+
+    auto make_quad = [&](size_t quad_index) {
+        std::array<glm::vec3, 4> vertices;
+        for (size_t i = 0; i < 4; ++i) { vertices[i] = glm::make_vec3(COORDS + quad_index * 4 * 3 + i * 3); }
+    };
+}

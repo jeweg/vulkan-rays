@@ -1,13 +1,35 @@
 #version 450
-
 #include "common.comp"
+
+struct Material
+{
+	vec4 albedo_and_roughness;
+	vec4 emissive_and_ior;
+	vec4 specular_and_coefficient;
+};
 
 struct Sphere
 {
 	vec4 center_and_radius;
-	vec4 albedo_and_roughness;
-	vec4 emissive_and_ior;
-	vec4 specular_and_coefficient;
+	uint material;
+};
+
+struct CheckeredQuad
+{
+	// 4 columns of vec4s (only xyz used): origin, n, u, v
+	mat4x4 plane_data;
+	float section_count_u;
+	float section_count_v;
+	uint material1;
+	uint material2;
+};
+
+struct HitRecord
+{
+	float dist;
+	vec3 pt;
+	vec3 normal;
+    uint material;
 };
 
 layout(binding = 1) uniform UniformBufferObject
@@ -15,73 +37,180 @@ layout(binding = 1) uniform UniformBufferObject
 	float exposure;
 	bool apply_aces;
 	float gamma_factor;
-	Sphere spheres[6];
+	float sky_factor;
+	int max_bounces;
+	int used_spheres;
+	int used_checkered_quads;
+	Material materials[20];
+	Sphere spheres[10];
+	CheckeredQuad checkered_quads[10];
 } ubo;
 
 
 // Only writes to out_hit_record if there's a hit. Always returns the hit distance or INF_DIST.
-void test_sphere(Sphere sphere, Ray ray, float max_distance, out HitRecord out_hit_record)
+void test_checkered_quad(int index, Ray ray, float max_distance, out HitRecord out_hit_record)
 {
-	float d = hit_sphere_shape(sphere.center_and_radius.xyz, sphere.center_and_radius.w, ray);
+	CheckeredQuad cq = ubo.checkered_quads[index];
+	vec3 plane_origin = cq.plane_data[0].xyz;
+	vec3 plane_n = cq.plane_data[1].xyz;
+	vec3 plane_u = cq.plane_data[2].xyz;
+	vec3 plane_v = cq.plane_data[3].xyz;
+
+	/*
+	plane_n = vec3(0, 1, 0);
+	plane_u = vec3(3, 0, 0);
+	plane_v = vec3(1, 0, 2);
+	plane_origin = vec3(0, 1, 0);
+	*/
+
+	float denom = dot(plane_n, ray.dir);
+	if (abs(denom) > 0.0001f) {
+		float t = dot(plane_origin - ray.origin, plane_n) / denom;
+		if (t > 0 && t < max_distance) {
+			vec3 pt = ray.origin + t * ray.dir;
+			float fractional_u = dot(pt - plane_origin, plane_u) / dot(plane_u, plane_u);
+			if (fractional_u > 0 && fractional_u < 1) {
+				float fractional_v = dot(pt - plane_origin, plane_v) / dot(plane_v, plane_v);
+				if (fractional_v > 0 && fractional_v < 1) {
+					out_hit_record.dist = t;
+					out_hit_record.pt = pt;
+					out_hit_record.normal = denom > 0 ? -plane_n : plane_n;
+					bool i = bool(uint(floor(fractional_u * cq.section_count_u)) & 1);
+					bool j = bool(uint(floor(fractional_v * cq.section_count_v)) & 1);
+					if (i == j) {
+						out_hit_record.material = cq.material1;
+					} else {
+						out_hit_record.material = cq.material2;
+					}
+					return;
+				}
+			}
+		}
+	}
+	out_hit_record.dist = INF_DIST;
+}
+
+//----------------------------------------------------------------------
+
+// Only writes to out_hit_record if there's a hit. Always returns the hit distance or INF_DIST.
+void test_sphere(uint index, Ray ray, float max_distance, out HitRecord out_hit_record)
+{
+	float d = hit_sphere_shape(ubo.spheres[index].center_and_radius.xyz, ubo.spheres[index].center_and_radius.w, ray, 0, 9999999);
 	if (d >= 0 && d < max_distance) {
 		vec3 pt = d * ray.dir + ray.origin;
-		out_hit_record.pt = pt;
-		out_hit_record.normal = normalize(pt - sphere.center_and_radius.xyz);
-		out_hit_record.albedo_and_roughness = sphere.albedo_and_roughness;
-		out_hit_record.emissive_and_ior = sphere.emissive_and_ior;
-		out_hit_record.specular_and_coefficient = sphere.specular_and_coefficient;
 		out_hit_record.dist = d;
+		out_hit_record.pt = pt;
+		out_hit_record.normal = normalize(pt - ubo.spheres[index].center_and_radius.xyz);
+		out_hit_record.material = ubo.spheres[index].material;
 	} else {
 		out_hit_record.dist = INF_DIST;
 	}
 }
 
 
+// From https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
+bool rayTriangleIntersect( 
+    vec3 orig, vec3 dir, 
+    vec3 v0, vec3 v1, vec3 v2, 
+    out float t, out float u, out float v) 
+{ 
+    vec3 v0v1 = v1 - v0; 
+    vec3 v0v2 = v2 - v0; 
+    vec3 pvec = cross(dir, v0v2); 
+    float det = dot(v0v1, pvec); 
+    // ray and triangle are parallel if det is close to 0
+    if (abs(det) < 0.0001) return false; 
+    float invDet = 1.0 / det; 
+ 
+    vec3 tvec = orig - v0; 
+    u = dot(tvec, pvec) * invDet; 
+    if (u < 0 || u > 1) return false; 
+ 
+    vec3 qvec = cross(tvec, v0v1); 
+    v = dot(dir, qvec) * invDet; 
+    if (v < 0 || u + v > 1) return false; 
+ 
+    t = dot(v0v2, qvec) * invDet; 
+    return true; 
+} 
+
+
 void intersect_ray_with_world(Ray ray, out HitRecord hit_record)
 {
 	hit_record.dist = INF_DIST;
 	float closest_dist = INF_DIST;
-	for (int i = 0; i < 6; ++i) {
+	for (int i = 0; i < ubo.used_spheres; ++i) {
 		HitRecord hr;
-		test_sphere(ubo.spheres[i], ray, closest_dist, hr);
-		if (hr.dist < closest_dist) {
+		test_sphere(i, ray, closest_dist, hr);
+		if (hr.dist != INF_DIST) {
 			closest_dist = hr.dist;
 			hit_record = hr;
 		}
 	}
+
+	for (int i = 0; i < ubo.used_checkered_quads; ++i) {
+		HitRecord hr;
+		test_checkered_quad(i, ray, closest_dist, hr);
+		if (hr.dist != INF_DIST) {
+			closest_dist = hr.dist;
+			hit_record = hr;
+		}
+	}
+
+
+#if 0
+	float t, u, v;
+	if (rayTriangleIntersect(ray.origin, ray.dir,
+		vec3(0, 2, -1),
+		vec3(2, 2, -1),
+		vec3(2, 2, -2),
+		t, u, v)) {
+
+		vec3 x = ray.origin + t * ray.dir;
+		float dist = distance(x, ray.origin);
+		if (dist < closest_dist) {
+			closest_dist = dist;
+			hit_record.dist = dist;
+			hit_record.pt = x;
+			hit_record.normal = vec3(0, 1, 0);
+			hit_record.material = 0;
+		}
+	}
+#endif
 }
 
 
 vec3 compute_color_for_ray(Ray ray)
 {
-	const int MAX_BOUNCE_COUNT = 10;
 	vec3 remaining_weight = vec3(1);
 	vec3 result = vec3(0);
 
-	for (int bounce = 0; bounce < MAX_BOUNCE_COUNT; ++bounce) {
+	for (int bounce = 0; bounce < ubo.max_bounces; ++bounce) {
 
 		HitRecord hit_record;
 		intersect_ray_with_world(ray, hit_record);
 
+		Material hit_material = ubo.materials[hit_record.material];
+
 		if (hit_record.dist == INF_DIST) {
 			// We hit the environment.
-			vec3 sky_color = mix(vec3(0, 0, 0.2), vec3(0.7, 0.6, 1), normalize(ray.dir).y * 0.5 + vec3(0.3));
-			result += 0.2 * (sky_color * remaining_weight);
+			vec3 sky_color = mix(vec3(0, 0, 0.2), vec3(0.7, 0.6, 1), ray.dir.y * 0.5 + vec3(0.3));
+			result += ubo.sky_factor * (sky_color * remaining_weight);
 			break;
 		}
 
-		result += hit_record.emissive_and_ior.xyz * remaining_weight;
+		result += hit_material.emissive_and_ior.xyz * remaining_weight;
 
-		if (bounce + 1 == MAX_BOUNCE_COUNT) {
+		if (bounce + 1 == ubo.max_bounces) {
 			break;
 		}
 
 		// Make a new ray for the next iteration.
 
-		float specular_chance = hit_record.specular_and_coefficient.w;
+		float specular_chance = hit_material.specular_and_coefficient.w;
 		if (specular_chance > 0) {
-			specular_chance = compute_fresnel_reflect_amount(1.0, hit_record.emissive_and_ior.w, normalize(ray.dir), hit_record.normal, 
-				hit_record.specular_and_coefficient.w, 1);
+			specular_chance = compute_fresnel_reflect_amount(1.0, hit_material.emissive_and_ior.w, ray.dir, hit_record.normal, 
+				hit_material.specular_and_coefficient.w, 1);
 		}
 		float do_specular = float(random_float_01(rng_state) <= specular_chance);
 
@@ -95,14 +224,14 @@ vec3 compute_color_for_ray(Ray ray)
 
 		// Square roughness as usual. We might as well put it squared into the ubo, but let's
 		// keep it here for now for clarity.
-		float roughness = hit_record.albedo_and_roughness.w * hit_record.albedo_and_roughness.w;
+		float roughness = hit_material.albedo_and_roughness.w * hit_material.albedo_and_roughness.w;
 
 		ray_dir_specular = mix(ray_dir_specular, ray_dir_diffuse, roughness);
 
-		ray.dir = mix(ray_dir_diffuse, ray_dir_specular, do_specular);
+		ray.dir = normalize(mix(ray_dir_diffuse, ray_dir_specular, do_specular));
 		ray.origin = hit_record.pt + hit_record.normal * RAY_START_BIAS;
 
-		remaining_weight *= mix(hit_record.albedo_and_roughness.xyz, hit_record.specular_and_coefficient.xyz, do_specular);
+		remaining_weight *= mix(hit_material.albedo_and_roughness.xyz, hit_material.specular_and_coefficient.xyz, do_specular);
 
 		// since we chose randomly between diffuse and specular,
 		// we need to account for the times we didn't do one or the other.
@@ -155,6 +284,8 @@ void main()
 	// that system gamma with a factor (applying pow(color, 1/gamma) twice will
 	// result in pow(color, 1/(system_gamma * gamma_factor))).
 	linear_color = pow(linear_color, vec3(1.0 / ubo.gamma_factor));
+
+	linear_color = clamp(linear_color, vec3(0), vec3(1));
 
 	vec4 accum_color = imageLoad(inout_image, this_pixel);
 	// Branchless condition: if we just started a progression, we treat

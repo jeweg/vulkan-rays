@@ -9,8 +9,11 @@
 #include "gui_handler.hpp"
 #include "debugbreak.h"
 
-#define GLM_FORCE_SWIZZLE
+//#define GLM_SWIZZLE
+#define GLM_SWIZZLE_XYZW
+#include "glm/glm.hpp"
 #include "glm/vec2.hpp"
+#include "glm/vec3.hpp"
 #include "glm/vec4.hpp"
 #include "glm/mat4x4.hpp"
 #include "glm/gtc/matrix_transform.hpp"
@@ -221,6 +224,58 @@ int main()
 
         vk::UniqueSampler image_sampler = device.get().createSamplerUnique(vk::SamplerCreateInfo{});
 
+        struct Material
+        {
+            alignas(16) glm::vec4 albedo_and_roughness;
+            alignas(16) glm::vec4 emissive_and_ior;
+            alignas(16) glm::vec4 specular_and_coefficient;
+        };
+
+        struct Sphere
+        {
+            alignas(16) glm::vec4 center_and_radius;
+            alignas(4) uint32_t material;
+        };
+
+        struct CheckeredQuad
+        {
+            // I've tried to use glm::mat4x3 here, but it's just not
+            // layout-compatible with its glsl counterpart.
+            // In glsl, the columns of a mat4x3 (3 elements each) seem to be
+            // aligned to 16-byte boundaries separately, i.e. there's padding
+            // after each column. glm::mat4x3 doesn't have this padding.
+            // It actually works to use mat4x3 on the glsl side and glm::mat4
+            // in C++, but for clarity I chose to go with mat4 on both ends here.
+            alignas(16) glm::mat4 plane_data;
+            alignas(4) float section_count_u;
+            alignas(4) float section_count_v;
+            alignas(4) uint32_t material1;
+            alignas(4) uint32_t material2;
+
+            CheckeredQuad() = default;
+            CheckeredQuad(
+                const glm::vec3 &plane_origin,
+                const glm::vec3 &plane_u,
+                const glm::vec3 &plane_v,
+                float section_count_u,
+                float section_count_v,
+                uint32_t material1,
+                uint32_t material2) :
+                section_count_u(section_count_u),
+                section_count_v(section_count_v),
+                material1(material1),
+                material2(material2)
+            {
+                auto copy3 = [](glm::vec4 &dest, const glm::vec3 &src) {
+                    for (int c = 0; c < 3; ++c) { dest[c] = src[c]; }
+                };
+                copy3(plane_data[0], plane_origin);
+                copy3(plane_data[1], glm::normalize(glm::cross(plane_u, plane_v)));
+                copy3(plane_data[2], plane_u);
+                copy3(plane_data[3], plane_v);
+            }
+        };
+
         struct ComputePipeline
         {
             vk::UniquePipeline pipeline;
@@ -238,20 +293,18 @@ int main()
                 alignas(4) float delta_time = 0.f;
             } push_constants;
 
-            struct Sphere
-            {
-                glm::vec4 center_and_radius;
-                glm::vec4 albedo_and_roughness;
-                glm::vec4 emissive_and_ior;
-                glm::vec4 specular_and_coefficient;
-            };
-
             struct UBO
             {
                 alignas(4) float exposure = 1.3f;
                 alignas(4) bool apply_aces = true;
                 alignas(4) float gamma_factor = 1.f;
-                alignas(16) std::array<Sphere, 6> spheres;
+                alignas(4) float sky_factor = 1.f;
+                alignas(4) int max_bounces = 10;
+                alignas(4) int used_spheres = static_cast<int>(spheres.size());
+                alignas(4) int used_checkered_quads = static_cast<int>(checkered_quads.size());
+                alignas(16) std::array<Material, 20> materials;
+                alignas(16) std::array<Sphere, 10> spheres;
+                alignas(16) std::array<CheckeredQuad, 10> checkered_quads;
             } *ubo_data = nullptr;
             VmaBuffer ubo;
         } compute_pipeline;
@@ -314,49 +367,32 @@ int main()
         // Define world
 
         {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[0];
-            sphere.center_and_radius = glm::vec4(0, 0, 0, 1);
-            sphere.albedo_and_roughness = glm::vec4(1, 0.7, 0, 0.3);
-            sphere.emissive_and_ior = glm::vec4(3.0, 2.7, 0.8, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.6);
-        }
-        {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[1];
-            sphere.center_and_radius = glm::vec4(0, -16.4, 0, 15.4);
-            sphere.albedo_and_roughness = glm::vec4(0.7, 0.3, 0.3, 0.4);
-            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 0.8, 0.4, 0.6);
-        }
-        {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[2];
-            sphere.center_and_radius = glm::vec4(1.21, -0.47, 1.54, 0.7);
-            sphere.albedo_and_roughness = glm::vec4(0.1, 0.4, 0.9, 0.9);
-            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.0);
-        }
-        {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[3];
-            sphere.center_and_radius = glm::vec4(-2.1, 0.64, 0.2, 0.59);
-            sphere.albedo_and_roughness = glm::vec4(0.86, 0, 0, 0.5);
-            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-        }
-        {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[4];
-            sphere.center_and_radius = glm::vec4(-1.42, -0.63, -0.36, 0.45);
-            sphere.albedo_and_roughness = glm::vec4(0.8, 0.8, 0.8, 0.5);
-            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-        }
-        {
-            ComputePipeline::Sphere &sphere = compute_pipeline.ubo_data->spheres[5];
-            sphere.center_and_radius = glm::vec4(-0.58, -0.76, -1.53, 0.33);
-            sphere.albedo_and_roughness = glm::vec4(0.1, 0.7, 0.2, 0.5);
-            sphere.emissive_and_ior = glm::vec4(0, 0, 0, 1);
-            sphere.specular_and_coefficient = glm::vec4(1, 1, 1, 0.5);
-        }
+            auto &m = compute_pipeline.ubo_data->materials;
+            // albedo_and_roughness, emissive_and_ior, specular_and_coefficient
+            m[0] = {glm::vec4(1, 0.7, 0, 0.3), glm::vec4(3.0, 2.7, 0.8, 1), glm::vec4(1, 1, 1, 0.7)};
+            m[1] = {glm::vec4(0.7, 0.3, 0.3, 0.4), glm::vec4(0, 0, 0, 1), glm::vec4(1, 0.9, 0.8, 0.7)};
+            m[2] = {glm::vec4(0.1, 0.4, 0.9, 0.9), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.6)};
+            m[3] = {glm::vec4(0.36, 0, 0.9, 0.5), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.5)};
+            m[4] = {glm::vec4(0.8, 0.8, 0.8, 0.5), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.6)};
+            m[5] = {glm::vec4(0.1, 0.7, 0.2, 0.15), glm::vec4(0, 0, 0, 1), glm::vec4(1, 0.2, 0.2, 1)};
 
-        // Describe world to compute pipeline.
+            auto &s = compute_pipeline.ubo_data->spheres;
+            // center_and_radius, material index
+            s[0] = {glm::vec4(0, 0, 0, 1), 0};
+            s[1] = {glm::vec4(0, -16.4, 0, 15.4), 1};
+            s[2] = {glm::vec4(1.21, -0.47, 1.54, 0.7), 2};
+            s[3] = {glm::vec4(-2.1, 0.64, 0.2, 0.59), 3};
+            s[4] = {glm::vec4(-1.42, -0.63, -0.36, 0.45), 4};
+            s[5] = {glm::vec4(-0.58, -0.76, -1.53, 0.33), 5};
+            compute_pipeline.ubo_data->used_spheres = 6;
+
+            auto &c = compute_pipeline.ubo_data->checkered_quads;
+            // plane_origin, plane_u, plane_v, section_count_u, section_count_v, material1, material2
+            c[0] = CheckeredQuad(glm::vec3(-10, -1, -10), glm::vec3(100, 0, 0), glm::vec3(0, 0, 100), 100, 100, 5, 1);
+            c[1] = CheckeredQuad(glm::vec3(-3, -1, -3), glm::vec3(6, 0, 0), glm::vec3(0, 3, 0), 12, 6, 1, 3);
+            c[2] = CheckeredQuad(glm::vec3(3, -1, -3), glm::vec3(0, 0, 6), glm::vec3(0, 3, 0), 20, 1, 2, 0);
+            compute_pipeline.ubo_data->used_checkered_quads = 3;
+        }
 
         device.get().updateDescriptorSets(
             std::initializer_list<vk::WriteDescriptorSet>{
@@ -616,17 +652,24 @@ int main()
 
                 // ImGui::ShowDemoWindow();
                 ImGui::Begin("Controls", nullptr, 0);
-                if (ImGui::SliderFloat(
-                        "Reinhard exposure", &compute_pipeline.ubo_data->exposure, 0.1f, 10.0f, "%.1f")) {
-                    restart_progression();
-                };
-                if (ImGui::Checkbox("Apply ACES filmic tone mapping", &compute_pipeline.ubo_data->apply_aces)) {
-                    restart_progression();
-                };
-                if (ImGui::SliderFloat("Gamma factor", &compute_pipeline.ubo_data->gamma_factor, 0.1f, 2.f, "%.1f")) {
-                    restart_progression();
-                };
+                bool changed = false;
+                changed =
+                    ImGui::SliderFloat("Reinhard exposure", &compute_pipeline.ubo_data->exposure, 0.1f, 10.0f, "%.1f")
+                    || changed;
+                changed = ImGui::Checkbox("Apply ACES filmic tone mapping", &compute_pipeline.ubo_data->apply_aces)
+                          || changed;
+                changed =
+                    ImGui::SliderFloat("Gamma factor", &compute_pipeline.ubo_data->gamma_factor, 0.1f, 2.f, "%.1f")
+                    || changed;
+                changed =
+                    ImGui::SliderFloat("Sky", &compute_pipeline.ubo_data->sky_factor, 0.f, 1.f, "%.1f") || changed;
+                changed =
+                    ImGui::SliderInt("Max # bounces", &compute_pipeline.ubo_data->max_bounces, 0, 20, "%3d") || changed;
+                changed = ImGui::SliderInt("Used # spheres", &compute_pipeline.ubo_data->used_spheres, 0, 6, "%3d")
+                          || changed;
                 ImGui::End();
+
+                if (changed) { restart_progression(); }
 
                 //----------------------------------------------------------------------
                 // Compute dispatch
