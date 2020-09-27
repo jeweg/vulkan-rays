@@ -108,7 +108,7 @@ bool test_sphere(int index, Ray ray, inout HitRecord hit_record)
         dist = -b + sqrt(discriminant);
     }
     
-	if (dist > 0.01f && dist < hit_record.dist) {
+	if (dist < hit_record.dist) {
 		// Or
 		// info.hit_from_inside = dot(info.normal, ray.dir) > 0;
 		// but if hit_from_inside, the hit normal must be flipped for refract to work!
