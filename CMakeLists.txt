@@ -5,6 +5,7 @@ find_package(Vulkan REQUIRED)
 add_subdirectory(3rd-party/glfw)
 
 set(sources
+	README.md
 	src/main.cpp
 	src/utils.hpp
 	src/device.hpp
