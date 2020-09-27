@@ -229,6 +229,7 @@ int main()
             alignas(16) glm::vec4 albedo_and_roughness;
             alignas(16) glm::vec4 emissive_and_ior;
             alignas(16) glm::vec4 specular_and_coefficient;
+            alignas(16) glm::vec4 refraction_color_and_chance;
         };
 
         struct Sphere
@@ -368,13 +369,50 @@ int main()
 
         {
             auto &m = compute_pipeline.ubo_data->materials;
-            // albedo_and_roughness, emissive_and_ior, specular_and_coefficient
-            m[0] = {glm::vec4(1, 0.7, 0, 0.3), glm::vec4(3.0, 2.7, 0.8, 1), glm::vec4(1, 1, 1, 0.7)};
-            m[1] = {glm::vec4(0.7, 0.3, 0.3, 0.4), glm::vec4(0, 0, 0, 1), glm::vec4(1, 0.9, 0.8, 0.7)};
-            m[2] = {glm::vec4(0.1, 0.4, 0.9, 0.9), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.6)};
-            m[3] = {glm::vec4(0.36, 0, 0.9, 0.5), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.5)};
-            m[4] = {glm::vec4(0.8, 0.8, 0.8, 0.5), glm::vec4(0, 0, 0, 1), glm::vec4(1, 1, 1, 0.6)};
-            m[5] = {glm::vec4(0.1, 0.7, 0.2, 0.15), glm::vec4(0, 0, 0, 1), glm::vec4(1, 0.2, 0.2, 1)};
+            // albedo_and_roughness,
+            // emissive_and_ior,
+            // specular_and_coefficient,
+            // refraction_color_and_chance
+            m[0] = {
+                glm::vec4(1, 0.7, 0, 0.3),
+                glm::vec4(3.0, 2.7, 0.8, 1),
+                glm::vec4(1, 1, 1, 0.7),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[1] = {
+                glm::vec4(0.7, 0.3, 0.3, 0.4),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(1, 0.9, 0.8, 0.7),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[2] = {
+                glm::vec4(0.1, 0.4, 0.9, 0.9),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(1, 1, 1, 0.6),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[3] = {
+                glm::vec4(0.36, 0, 0.9, 0.5),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(1, 1, 1, 0.5),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[4] = {
+                glm::vec4(0.8, 0.8, 0.8, 0.5),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(1, 1, 1, 0.6),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[5] = {
+                glm::vec4(0.1, 0.7, 0.2, 0.15),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(0.8, 0.2, 0.1, 1),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[6] = {
+                glm::vec4(0.1, 0.7, 0.2, 0.15),
+                glm::vec4(0, 0, 0, 1),
+                glm::vec4(0.1, 0.2, 0.8, 1),
+                glm::vec4(0.1, 0.1, 0.1, 0.0)};
+            m[7] = {
+                glm::vec4(1, 1, 1, 0.0),
+                glm::vec4(0, 0, 0, 1.5),
+                glm::vec4(0.1, 0.8, 0.2, 0.0),
+                glm::vec4(0, 0, 0, 1.0)};
 
             auto &s = compute_pipeline.ubo_data->spheres;
             // center_and_radius, material index
@@ -384,13 +422,15 @@ int main()
             s[3] = {glm::vec4(-2.1, 0.64, 0.2, 0.59), 3};
             s[4] = {glm::vec4(-1.42, -0.63, -0.36, 0.45), 4};
             s[5] = {glm::vec4(-0.58, -0.76, -1.53, 0.33), 5};
-            compute_pipeline.ubo_data->used_spheres = 6;
+            s[6] = {glm::vec4(-2.7, 0.3, 1.53, 0.8), 7};
+            s[7] = {glm::vec4(2.7, 0.17, 0.98, 0.4), 6};
+            compute_pipeline.ubo_data->used_spheres = 8;
 
             auto &c = compute_pipeline.ubo_data->checkered_quads;
             // plane_origin, plane_u, plane_v, section_count_u, section_count_v, material1, material2
             c[0] = CheckeredQuad(glm::vec3(-10, -1, -10), glm::vec3(100, 0, 0), glm::vec3(0, 0, 100), 100, 100, 5, 1);
-            c[1] = CheckeredQuad(glm::vec3(-3, -1, -3), glm::vec3(6, 0, 0), glm::vec3(0, 3, 0), 12, 6, 1, 3);
-            c[2] = CheckeredQuad(glm::vec3(3, -1, -3), glm::vec3(0, 0, 6), glm::vec3(0, 3, 0), 20, 1, 2, 0);
+            c[1] = CheckeredQuad(glm::vec3(-3, -1, -3), glm::vec3(6, 0, 0), glm::vec3(0, 100, 0), 12, 6, 1, 3);
+            c[2] = CheckeredQuad(glm::vec3(3, -1, -3), glm::vec3(0, 0, 6), glm::vec3(0, 2, 0), 20, 1, 2, 7);
             compute_pipeline.ubo_data->used_checkered_quads = 3;
         }
 
@@ -654,18 +694,21 @@ int main()
                 ImGui::Begin("Controls", nullptr, 0);
                 bool changed = false;
                 changed =
-                    ImGui::SliderFloat("Reinhard exposure", &compute_pipeline.ubo_data->exposure, 0.1f, 10.0f, "%.1f")
+                    ImGui::SliderFloat("Reinhard exposure", &compute_pipeline.ubo_data->exposure, 0.1f, 10.0f, "%.2f")
                     || changed;
                 changed = ImGui::Checkbox("Apply ACES filmic tone mapping", &compute_pipeline.ubo_data->apply_aces)
                           || changed;
                 changed =
-                    ImGui::SliderFloat("Gamma factor", &compute_pipeline.ubo_data->gamma_factor, 0.1f, 2.f, "%.1f")
+                    ImGui::SliderFloat("Gamma factor", &compute_pipeline.ubo_data->gamma_factor, 0.1f, 2.f, "%.2f")
                     || changed;
                 changed =
-                    ImGui::SliderFloat("Sky", &compute_pipeline.ubo_data->sky_factor, 0.f, 1.f, "%.1f") || changed;
+                    ImGui::SliderFloat("Sky", &compute_pipeline.ubo_data->sky_factor, 0.f, 1.f, "%.2f") || changed;
                 changed =
                     ImGui::SliderInt("Max # bounces", &compute_pipeline.ubo_data->max_bounces, 0, 20, "%3d") || changed;
-                changed = ImGui::SliderInt("Used # spheres", &compute_pipeline.ubo_data->used_spheres, 0, 6, "%3d")
+                changed = ImGui::SliderInt("Used # spheres", &compute_pipeline.ubo_data->used_spheres, 0, 8, "%3d")
+                          || changed;
+                changed = ImGui::SliderFloat(
+                              "IOR", &compute_pipeline.ubo_data->materials[7].emissive_and_ior.w, 1.f, 4.3f, "%.2f")
                           || changed;
                 ImGui::End();
 
@@ -701,8 +744,7 @@ int main()
                     if (g_right_mouse_dragger.has_delta()) { eye_dist += g_right_mouse_dragger.get_delta().y * 0.02f; }
                     eye_dist -= g_wheel_dragger;
                     g_wheel_dragger = 0;
-                    eye_dist = std::min(eye_dist, 20.f);
-                    eye_dist = std::max(eye_dist, 1.f);
+                    eye_dist = clamp(eye_dist, 0.5f, 40.f);
 
                     if (g_left_mouse_dragger.has_delta()) {
                         auto delta = g_left_mouse_dragger.get_delta();
