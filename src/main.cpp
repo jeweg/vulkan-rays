@@ -133,16 +133,28 @@ int main()
             dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
         VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
+        std::vector<vk::ExtensionProperties> ext_props = vk::enumerateInstanceExtensionProperties();
+        /*
+        std::cerr << "Available instance extensions:\n";
+        for (const auto& ext_prop : ext_props) {
+            std::cerr << ext_prop.extensionName << "\n";
+        }
+        */
+
         std::vector<const char *> instance_extensions = {
             VK_EXT_DEBUG_UTILS_EXTENSION_NAME, VK_KHR_SURFACE_EXTENSION_NAME, "VK_KHR_get_surface_capabilities2"};
 #if defined(_WIN32)
         instance_extensions.push_back("VK_KHR_win32_surface");
 #elif !(defined(__APPLE__) || defined(__MACH__))
-        // TODO: How do we choose between xcb and xlib? Does glfw require one? Not sure.
-        instance_extensions.add("VK_KHR_xcb_surface");
-        // extensions_ptrs.push_back("VK_KHR_xlib_surface");
+        if (std::find_if(ext_props.cbegin(), ext_props.cend(), [](const auto& ep){
+                return std::string(ep.extensionName) == "VK_KHR_xcb_surface";
+            }) != ext_props.cend()) {
+            instance_extensions.push_back("VK_KHR_xcb_surface");
+        } else {
+            instance_extensions.push_back("VK_KHR_xlib_surface");
+        }
 #else
-#    error Unsupported platform!
+#    error Currently unsupported platform!
 #endif
 
         uint32_t glfw_exts_count = 0;
