@@ -43,21 +43,16 @@ foreach(glsl_source IN LISTS glsl_sources)
 	endif()
 	set(input_file ${CMAKE_CURRENT_SOURCE_DIR}/${glsl_source})
 	set(output_file ${CMAKE_CURRENT_BINARY_DIR}/${glsl_source}.spirv)
-	set(command "glslc -fshader-stage=${shader_stage} ${input_file} -o ${output_file}")
+    get_filename_component(output_dir "${output_file}" DIRECTORY)
 	add_custom_command(
 			OUTPUT ${output_file}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir}
 			COMMAND glslc -fshader-stage=${shader_stage} "${input_file}" -o "${output_file}"
 			MAIN_DEPENDENCY ${input_file}
 			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 	)
 	list(APPEND spirv_files ${output_file})
 endforeach()
-add_custom_command(
-		OUTPUT fragment.spv
-		COMMAND "glslc -fshader-stage=fragment fragmentshader.glsl -o fragment.spv" #glslc is on the system path on my computer, so I am not currently worried about `find_package`ing it.
-		MAIN_DEPENDENCY fragmentshader.glsl
-		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-)
 
 set(build_info_hpp_in "\
 #pragma once
