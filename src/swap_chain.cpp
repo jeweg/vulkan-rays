@@ -337,12 +337,13 @@ void SwapChain::end_current_frame(FrameImage &frame_image)
 
     fd.command_buffer->end();
 
+    vk::PipelineStageFlags dst_stage_mask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
     auto submit_info =
         vk::SubmitInfo{}
             .setCommandBuffers(fd.command_buffer.get())
             .setWaitSemaphores(fd.image_available_for_rendering_sema.get())
             .setSignalSemaphores(fd.rendering_finished_sema.get())
-            .setWaitDstStageMask(vk::PipelineStageFlags(vk::PipelineStageFlagBits::eColorAttachmentOutput));
+            .setWaitDstStageMask(dst_stage_mask);
     _device.get_queue(Device::Queue::Graphics).submit({submit_info}, fd.finished_fence.get());
 
     try {

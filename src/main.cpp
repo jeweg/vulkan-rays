@@ -586,13 +586,18 @@ int main()
                 auto input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo{}
                                                 .setTopology(vk::PrimitiveTopology::eTriangleList)
                                                 .setPrimitiveRestartEnable(false);
-                auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(
-                    std::initializer_list<vk::DynamicState>{vk::DynamicState::eViewport, vk::DynamicState::eScissor});
+
+                std::array<vk::DynamicState, 2> dyn_state_flags = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+                auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dyn_state_flags);
+
+                auto vp = vk::Viewport(
+                    0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1);
+                auto scissor_rect = vk::Rect2D({0, 0}, extent);
                 auto viewport_state =
                     vk::PipelineViewportStateCreateInfo{}
-                        .setViewports(vk::Viewport(
-                            0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1))
-                        .setScissors(vk::Rect2D({0, 0}, extent));
+                        .setViewports(vp)
+                        .setScissors(scissor_rect);
+
                 auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
                                                .setPolygonMode(vk::PolygonMode::eFill)
                                                .setCullMode(vk::CullModeFlagBits::eNone)
@@ -616,10 +621,11 @@ int main()
                                                              .setFailOp(vk::StencilOp::eKeep)
                                                              .setPassOp(vk::StencilOp::eKeep)
                                                              .setCompareOp(vk::CompareOp::eAlways));
-                auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(
-                    vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
-                        vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
-                        | vk::ColorComponentFlagBits::eA));
+
+                auto cbas = vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
+                    vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
+                        | vk::ColorComponentFlagBits::eA);
+                auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(cbas);
 
                 graphics_pipeline.pipeline = device.get().createGraphicsPipelineUnique(
                     pipeline_cache.get(),
