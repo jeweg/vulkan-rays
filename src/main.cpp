@@ -146,9 +146,11 @@ int main()
 #if defined(_WIN32)
         instance_extensions.push_back("VK_KHR_win32_surface");
 #elif !(defined(__APPLE__) || defined(__MACH__))
-        if (std::find_if(ext_props.cbegin(), ext_props.cend(), [](const auto& ep){
-                return std::string(ep.extensionName) == "VK_KHR_xcb_surface";
-            }) != ext_props.cend()) {
+        if (std::find_if(
+                ext_props.cbegin(),
+                ext_props.cend(),
+                [](const auto &ep) { return std::string(ep.extensionName) == "VK_KHR_xcb_surface"; })
+            != ext_props.cend()) {
             instance_extensions.push_back("VK_KHR_xcb_surface");
         } else {
             instance_extensions.push_back("VK_KHR_xlib_surface");
@@ -212,6 +214,8 @@ int main()
         ASSUME(!physical_devices.empty());
 
         vk::PhysicalDevice phys_device = physical_devices.front();
+
+        vk::PhysicalDeviceProperties phys_props = phys_device.getProperties();
 
         std::vector<const char *> device_extensions = {
             "VK_KHR_swapchain", "VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation"};
@@ -587,16 +591,13 @@ int main()
                                                 .setTopology(vk::PrimitiveTopology::eTriangleList)
                                                 .setPrimitiveRestartEnable(false);
 
-                std::array<vk::DynamicState, 2> dyn_state_flags = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+                std::array<vk::DynamicState, 2> dyn_state_flags = {
+                    vk::DynamicState::eViewport, vk::DynamicState::eScissor};
                 auto dyn_state = vk::PipelineDynamicStateCreateInfo{}.setDynamicStates(dyn_state_flags);
 
-                auto vp = vk::Viewport(
-                    0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1);
+                auto vp = vk::Viewport(0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1);
                 auto scissor_rect = vk::Rect2D({0, 0}, extent);
-                auto viewport_state =
-                    vk::PipelineViewportStateCreateInfo{}
-                        .setViewports(vp)
-                        .setScissors(scissor_rect);
+                auto viewport_state = vk::PipelineViewportStateCreateInfo{}.setViewports(vp).setScissors(scissor_rect);
 
                 auto rasterization_state = vk::PipelineRasterizationStateCreateInfo{}
                                                .setPolygonMode(vk::PolygonMode::eFill)
@@ -624,7 +625,7 @@ int main()
 
                 auto cbas = vk::PipelineColorBlendAttachmentState{}.setColorWriteMask(
                     vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB
-                        | vk::ColorComponentFlagBits::eA);
+                    | vk::ColorComponentFlagBits::eA);
                 auto color_blend_state = vk::PipelineColorBlendStateCreateInfo{}.setAttachments(cbas);
 
                 graphics_pipeline.pipeline = device.get().createGraphicsPipelineUnique(
@@ -796,7 +797,9 @@ int main()
 
                 cmd_buffer.bindDescriptorSets(
                     vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_pipeline.ds.get(), {});
-                cmd_buffer.dispatch(window.get_width(), window.get_height(), 1);
+
+                cmd_buffer.dispatch(
+                    static_cast<uint32_t>(std::ceil(window.get_width() / 128.0)), window.get_height(), 1);
 
                 //----------------------------------------------------------------------
                 // Graphics dispatch

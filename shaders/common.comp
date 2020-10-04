@@ -1,6 +1,3 @@
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
-
-// See https://community.khronos.org/t/drawing-to-image-from-compute-shader-example/7116/2
 layout(binding = 0, rgba8) uniform image2D inout_image;
 
 layout(push_constant) uniform PushConstantBlock 
@@ -31,7 +28,8 @@ struct Ray
 uint rng_state;
 void init_rng()
 {
-	rng_state = uint(dot(uvec3(gl_WorkGroupID.xy, PushConstants.progression_index), uvec3(1973, 9277, 26699))) | uint(1);
+	//rng_state = uint(dot(uvec3(gl_WorkGroupID.xy, PushConstants.progression_index), uvec3(1973, 9277, 26699))) | uint(1);
+	rng_state = uint(dot(uvec3(gl_GlobalInvocationID.xy, PushConstants.progression_index), uvec3(1973, 9277, 26699))) | uint(1);
 }
 
 uint wang_hash(inout uint seed)
@@ -82,10 +80,10 @@ vec2 eval_r2_sequence(uint sample_index)
 
 //----------------------------------------------------------------------
 
-// Creates a primary ray through this local workgroup's pixel,
-// with the specified offset within the pixel. Offset coefficents should be in interval [0, 1],
+// Creates a primary ray through the specified pixel with the specified offset within it.
+// Offset coefficents should be in interval [0, 1],
 // 0.5 is the pixel center.
-void make_primary_ray(vec2 offset, out Ray out_ray)
+void make_primary_ray(ivec2 pixel_coords, vec2 offset, out Ray out_ray)
 {
 	// These could come from push constants or a uniform buffer.
 	const vec2 screen_dims = vec2(imageSize(inout_image));
@@ -93,9 +91,11 @@ void make_primary_ray(vec2 offset, out Ray out_ray)
 
 	// The image plane will go from -1 to +1 in the x direction.
 	// The y direction is proportional to x, scaled with the aspect ratio.
-	const vec2 this_pixel = vec2(gl_WorkGroupID.xy) - vec2(0.5) + offset;
-	const float center_pixel_dx = (2 * this_pixel.x + 1) / screen_dims.x - 1;
-	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * this_pixel.y + 1 - screen_dims.y) / screen_dims.y;
+
+    vec2 float_pixel_coords = vec2(pixel_coords) - vec2(0.5) + offset;
+
+	const float center_pixel_dx = (2 * float_pixel_coords.x + 1) / screen_dims.x - 1;
+	const float center_pixel_dy = (screen_dims.y / screen_dims.x) * (2 * float_pixel_coords.y + 1 - screen_dims.y) / screen_dims.y;
 
 	//out_ray.origin = vec3(0);
 	//out_ray.dir = vec3(center_pixel_dx, center_pixel_dy, -eye_dist);

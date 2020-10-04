@@ -1,4 +1,10 @@
 #version 450
+
+// For compatiblity, we use a workgroup size of 128 x 1 x 1.
+// According to gpuinfo, this should be widely supported.
+// Later on we should derive this from VkPhysicalDeviceLimits.
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
 #include "common.comp"
 
 struct Material
@@ -291,14 +297,19 @@ void main()
 {
 	init_rng();
 	const ivec2 screen_size = imageSize(inout_image);
-	const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
+	//const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
+
+	const ivec2 this_pixel = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+
+	if (this_pixel.x >= screen_size.x) {
+        return;
+	}
 
 	Ray ray;
 
 	const uint progression_index = PushConstants.progression_index;
-
 	vec2 offset = eval_r2_sequence(progression_index);
-	make_primary_ray(offset, ray);
+	make_primary_ray(this_pixel, offset, ray);
 
 	vec3 linear_color = compute_color_for_ray(ray);
 
