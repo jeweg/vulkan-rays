@@ -799,7 +799,7 @@ int main()
                     vk::PipelineBindPoint::eCompute, compute_pipeline.layout.get(), 0, compute_pipeline.ds.get(), {});
 
                 cmd_buffer.dispatch(
-                    static_cast<uint32_t>(std::ceil(window.get_width() / 128.0)), window.get_height(), 1);
+                    static_cast<uint32_t>(std::ceil(window.get_width() / 32.0)), window.get_height(), 1);
 
                 //----------------------------------------------------------------------
                 // Graphics dispatch

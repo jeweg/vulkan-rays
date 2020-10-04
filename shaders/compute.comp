@@ -3,7 +3,7 @@
 // For compatiblity, we use a workgroup size of 128 x 1 x 1.
 // According to gpuinfo, this should be widely supported.
 // Later on we should derive this from VkPhysicalDeviceLimits.
-layout (local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 #include "common.comp"
 
