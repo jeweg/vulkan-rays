@@ -25,6 +25,8 @@ public:
     vk::Extent2D get_extent() const { return _extent; }
     void set_extent(uint32_t width, uint32_t height);
 
+    uint32_t get_image_count() const;
+
 
     // RAII class returned from begin_next_frame.
     // We can use it to query data about the current frame's resources.

@@ -92,7 +92,7 @@ SwapChain::SwapChain(
             return weight;
         });
 
-    _num_frames_in_flight = 2;
+    _num_frames_in_flight = 1;
     // TODO: if (is_android or perhaps is_mobile) { _num_frames_in_flight = 3; }
 
     _extent.setWidth(width);
@@ -139,7 +139,7 @@ void SwapChain::recreate()
 
     auto swapchain_ci = vk::SwapchainCreateInfoKHR{}
                             .setSurface(_surface)
-                            .setMinImageCount(_num_frames_in_flight)
+                            .setMinImageCount(surface_caps.minImageCount)
                             .setImageFormat(_surface_format.format)
                             .setImageColorSpace(_surface_format.colorSpace)
                             .setImageExtent(extent)
@@ -241,6 +241,12 @@ bool SwapChain::FrameImage::is_valid() const
 }
 
 
+uint32_t SwapChain::get_image_count() const
+{
+    return to_uint32(_swapchain_image_views.size());
+}
+
+
 vk::CommandBuffer SwapChain::FrameImage::get_cmd_buffer(Device::Queue queue)
 {
     ASSUME(is_valid());
@@ -338,12 +344,11 @@ void SwapChain::end_current_frame(FrameImage &frame_image)
     fd.command_buffer->end();
 
     vk::PipelineStageFlags dst_stage_mask = vk::PipelineStageFlagBits::eColorAttachmentOutput;
-    auto submit_info =
-        vk::SubmitInfo{}
-            .setCommandBuffers(fd.command_buffer.get())
-            .setWaitSemaphores(fd.image_available_for_rendering_sema.get())
-            .setSignalSemaphores(fd.rendering_finished_sema.get())
-            .setWaitDstStageMask(dst_stage_mask);
+    auto submit_info = vk::SubmitInfo{}
+                           .setCommandBuffers(fd.command_buffer.get())
+                           .setWaitSemaphores(fd.image_available_for_rendering_sema.get())
+                           .setSignalSemaphores(fd.rendering_finished_sema.get())
+                           .setWaitDstStageMask(dst_stage_mask);
     _device.get_queue(Device::Queue::Graphics).submit({submit_info}, fd.finished_fence.get());
 
     try {

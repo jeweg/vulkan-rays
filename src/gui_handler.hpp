@@ -71,7 +71,7 @@ struct GuiHandler
         ci.Queue = device.get_queue(Device::Queue::Graphics);
         ci.PipelineCache = pipeline_cache;
         ci.DescriptorPool = descriptor_pool;
-        ci.MinImageCount = window.get_swap_chain().get_num_frames_in_flight();
+        ci.MinImageCount = window.get_swap_chain().get_image_count();
         ci.ImageCount = ci.MinImageCount;
 
         ci.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
