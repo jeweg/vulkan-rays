@@ -9,120 +9,120 @@ layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 struct Material
 {
-	vec4 albedo_and_roughness;
-	vec4 emissive_and_ior;
-	vec4 specular_and_coefficient;
-	vec4 refraction_color_and_chance;
+    vec4 albedo_and_roughness;
+    vec4 emissive_and_ior;
+    vec4 specular_and_coefficient;
+    vec4 refraction_color_and_chance;
 };
 
 struct Sphere
 {
-	vec4 center_and_radius;
-	uint material;
+    vec4 center_and_radius;
+    uint material;
 };
 
 struct CheckeredQuad
 {
-	// 4 columns of vec4s (only xyz used): origin, n, u, v
-	mat4x4 plane_data;
-	float section_count_u;
-	float section_count_v;
-	uint material1;
-	uint material2;
+// 4 columns of vec4s (only xyz used): origin, n, u, v
+    mat4x4 plane_data;
+    float section_count_u;
+    float section_count_v;
+    uint material1;
+    uint material2;
 };
 
 struct HitRecord
 {
-	// As a convention, if dist == INF_DIST it means no hit, an invalid HitRecord
-	// and that all other fields are to be ignored.
-	float dist;
-	bool hit_from_inside;
-	vec3 pt;
-	vec3 normal;
+// As a convention, if dist == INF_DIST it means no hit, an invalid HitRecord
+// and that all other fields are to be ignored.
+    float dist;
+    bool hit_from_inside;
+    vec3 pt;
+    vec3 normal;
     uint material;
 };
 
 layout(binding = 1) uniform UniformBufferObject
 {
-	float exposure;
-	bool apply_aces;
-	float gamma_factor;
-	float sky_factor;
-	int max_bounces;
-	int used_spheres;
-	int used_checkered_quads;
-	Material materials[20];
-	Sphere spheres[10];
-	CheckeredQuad checkered_quads[10];
+    float exposure;
+    bool apply_aces;
+    float gamma_factor;
+    float sky_factor;
+    int max_bounces;
+    int used_spheres;
+    int used_checkered_quads;
+    Material materials[20];
+    Sphere spheres[10];
+    CheckeredQuad checkered_quads[10];
 } ubo;
 
 
 bool test_checkered_quad(int index, Ray ray, inout HitRecord hit_record)
 {
-	CheckeredQuad cq = ubo.checkered_quads[index];
-	vec3 plane_origin = cq.plane_data[0].xyz;
-	vec3 plane_n = cq.plane_data[1].xyz;
-	vec3 plane_u = cq.plane_data[2].xyz;
-	vec3 plane_v = cq.plane_data[3].xyz;
-	float denom = dot(plane_n, ray.dir);
-	if (abs(denom) > 0.0001f) {
-		float t = dot(plane_origin - ray.origin, plane_n) / denom;
-		if (t > 0 && t < hit_record.dist) {
-			vec3 pt = ray.origin + t * ray.dir;
-			float fractional_u = dot(pt - plane_origin, plane_u) / dot(plane_u, plane_u);
-			if (fractional_u > 0 && fractional_u < 1) {
-				float fractional_v = dot(pt - plane_origin, plane_v) / dot(plane_v, plane_v);
-				if (fractional_v > 0 && fractional_v < 1) {
-					hit_record.dist = t;
-					hit_record.pt = pt;
-					hit_record.normal = denom > 0 ? -plane_n : plane_n;
-					bool i = bool(uint(floor(fractional_u * cq.section_count_u)) & 1);
-					bool j = bool(uint(floor(fractional_v * cq.section_count_v)) & 1);
-					if (i == j) {
-						hit_record.material = cq.material1;
-					} else {
-						hit_record.material = cq.material2;
-					}
-					hit_record.hit_from_inside = denom > 1;
-					return true;
-				}
-			}
-		}
-	}
-	return false;
+    CheckeredQuad cq = ubo.checkered_quads[index];
+    vec3 plane_origin = cq.plane_data[0].xyz;
+    vec3 plane_n = cq.plane_data[1].xyz;
+    vec3 plane_u = cq.plane_data[2].xyz;
+    vec3 plane_v = cq.plane_data[3].xyz;
+    float denom = dot(plane_n, ray.dir);
+    if (abs(denom) > 0.0001f) {
+        float t = dot(plane_origin - ray.origin, plane_n) / denom;
+        if (t > 0 && t < hit_record.dist) {
+            vec3 pt = ray.origin + t * ray.dir;
+            float fractional_u = dot(pt - plane_origin, plane_u) / dot(plane_u, plane_u);
+            if (fractional_u > 0 && fractional_u < 1) {
+                float fractional_v = dot(pt - plane_origin, plane_v) / dot(plane_v, plane_v);
+                if (fractional_v > 0 && fractional_v < 1) {
+                    hit_record.dist = t;
+                    hit_record.pt = pt;
+                    hit_record.normal = denom > 0 ? -plane_n : plane_n;
+                    bool i = bool(uint(floor(fractional_u * cq.section_count_u)) & 1);
+                    bool j = bool(uint(floor(fractional_v * cq.section_count_v)) & 1);
+                    if (i == j) {
+                        hit_record.material = cq.material1;
+                    } else {
+                        hit_record.material = cq.material2;
+                    }
+                    hit_record.hit_from_inside = denom > 1;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 
 // Adapted from Alan Wolfe /demofox
 bool test_sphere(int index, Ray ray, inout HitRecord hit_record)
-{    
-	Sphere sphere = ubo.spheres[index];
-	vec3 oc = ray.origin - sphere.center_and_radius.xyz;
-	float b = dot(oc, ray.dir);
-	float c = dot(oc, oc) - sphere.center_and_radius.w * sphere.center_and_radius.w;
+{
+    Sphere sphere = ubo.spheres[index];
+    vec3 oc = ray.origin - sphere.center_and_radius.xyz;
+    float b = dot(oc, ray.dir);
+    float c = dot(oc, oc) - sphere.center_and_radius.w * sphere.center_and_radius.w;
 
-	//exit if r's origin outside s (c > 0) and r pointing away from s (b > 0)
-	if (c > 0.0 && b > 0.0) { return false; }
-	float discriminant = b * b - c;
-	if (discriminant < 0.0) { return false; }
+    //exit if r's origin outside s (c > 0) and r pointing away from s (b > 0)
+    if (c > 0.0 && b > 0.0) { return false; }
+    float discriminant = b * b - c;
+    if (discriminant < 0.0) { return false; }
     bool from_inside = false;
-	float dist = -b - sqrt(discriminant);
+    float dist = -b - sqrt(discriminant);
     if (dist < 0.0f) {
-		// The smaller solution is actually behind us (beyond the ray origin). That must mean we are
-		// coming from the inside of the sphere.
+        // The smaller solution is actually behind us (beyond the ray origin). That must mean we are
+        // coming from the inside of the sphere.
         from_inside = true;
         dist = -b + sqrt(discriminant);
     }
-    
-	if (dist < hit_record.dist) {
-		// Or
-		// info.hit_from_inside = dot(info.normal, ray.dir) > 0;
-		// but if hit_from_inside, the hit normal must be flipped for refract to work!
+
+    if (dist < hit_record.dist) {
+        // Or
+        // info.hit_from_inside = dot(info.normal, ray.dir) > 0;
+        // but if hit_from_inside, the hit normal must be flipped for refract to work!
         hit_record.hit_from_inside = from_inside;
-        hit_record.dist = dist;        
-		hit_record.pt = ray.origin + ray.dir * dist;
+        hit_record.dist = dist;
+        hit_record.pt = ray.origin + ray.dir * dist;
         hit_record.normal = normalize(hit_record.pt - sphere.center_and_radius.xyz) * (from_inside ? -1.0f : 1.0f);
-		hit_record.material = sphere.material;
+        hit_record.material = sphere.material;
         return true;
     }
     return false;
@@ -130,216 +130,229 @@ bool test_sphere(int index, Ray ray, inout HitRecord hit_record)
 
 
 // From https://www.scratchapixel.com/lessons/3d-basic-rendering/ray-tracing-rendering-a-triangle/moller-trumbore-ray-triangle-intersection
-bool rayTriangleIntersect( 
-    vec3 orig, vec3 dir, 
-    vec3 v0, vec3 v1, vec3 v2, 
-    out float t, out float u, out float v) 
-{ 
-    vec3 v0v1 = v1 - v0; 
-    vec3 v0v2 = v2 - v0; 
-    vec3 pvec = cross(dir, v0v2); 
-    float det = dot(v0v1, pvec); 
+bool rayTriangleIntersect(
+vec3 orig, vec3 dir,
+vec3 v0, vec3 v1, vec3 v2,
+out float t, out float u, out float v)
+{
+    vec3 v0v1 = v1 - v0;
+    vec3 v0v2 = v2 - v0;
+    vec3 pvec = cross(dir, v0v2);
+    float det = dot(v0v1, pvec);
     // ray and triangle are parallel if det is close to 0
-    if (abs(det) < 0.0001) return false; 
-    float invDet = 1.0 / det; 
- 
-    vec3 tvec = orig - v0; 
-    u = dot(tvec, pvec) * invDet; 
-    if (u < 0 || u > 1) return false; 
- 
-    vec3 qvec = cross(tvec, v0v1); 
-    v = dot(dir, qvec) * invDet; 
-    if (v < 0 || u + v > 1) return false; 
- 
-    t = dot(v0v2, qvec) * invDet; 
-    return true; 
-} 
+    if (abs(det) < 0.0001) return false;
+    float invDet = 1.0 / det;
+
+    vec3 tvec = orig - v0;
+    u = dot(tvec, pvec) * invDet;
+    if (u < 0 || u > 1) return false;
+
+    vec3 qvec = cross(tvec, v0v1);
+    v = dot(dir, qvec) * invDet;
+    if (v < 0 || u + v > 1) return false;
+
+    t = dot(v0v2, qvec) * invDet;
+    return true;
+}
 
 
 void intersect_ray_with_world(Ray ray, out HitRecord hit_record)
 {
-	hit_record.dist = INF_DIST;
-	float closest_dist = INF_DIST;
-	for (int i = 0; i < ubo.used_spheres; ++i) {
-		test_sphere(i, ray, hit_record);
-	}
-	for (int i = 0; i < ubo.used_checkered_quads; ++i) {
-		test_checkered_quad(i, ray, hit_record);
-	}
+    hit_record.dist = INF_DIST;
+    float closest_dist = INF_DIST;
+    for (int i = 0; i < ubo.used_spheres; ++i) {
+        test_sphere(i, ray, hit_record);
+    }
+    for (int i = 0; i < ubo.used_checkered_quads; ++i) {
+        test_checkered_quad(i, ray, hit_record);
+    }
 }
 
 
 vec3 compute_color_for_ray(Ray ray)
 {
-	vec3 remaining_weight = vec3(1);
-	vec3 result = vec3(0);
+    vec3 remaining_weight = vec3(1);
+    vec3 result = vec3(0);
 
-	for (int bounce = 0; bounce < ubo.max_bounces; ++bounce) {
+    for (int bounce = 0; bounce < ubo.max_bounces; ++bounce) {
 
-		HitRecord hit_record;
-		intersect_ray_with_world(ray, hit_record);
+        HitRecord hit_record;
+        intersect_ray_with_world(ray, hit_record);
 
-		if (hit_record.dist == INF_DIST) {
-			// We hit the environment.
-			vec3 sky_color = mix(vec3(0, 0, 0.2), vec3(0.7, 0.6, 1), ray.dir.y * 0.5 + vec3(0.3));
-			result += ubo.sky_factor * (sky_color * remaining_weight);
-			break;
-		}
-		Material hit_material = ubo.materials[hit_record.material];
+        if (hit_record.dist == INF_DIST) {
+            // We hit the environment.
+            vec3 sky_color = mix(vec3(0, 0, 0.2), vec3(0.7, 0.6, 1), ray.dir.y * 0.5 + vec3(0.3));
+            result += ubo.sky_factor * (sky_color * remaining_weight);
+            break;
+        }
+        Material hit_material = ubo.materials[hit_record.material];
 
-		// do absorption if we are hitting from inside the object
-		if (hit_record.hit_from_inside) {
-			// Beer's law for absorption
-			remaining_weight *= exp(-hit_material.refraction_color_and_chance.xyz * hit_record.dist);
-		}
+        // do absorption if we are hitting from inside the object
+        if (hit_record.hit_from_inside) {
+            // Beer's law for absorption
+            remaining_weight *= exp(-hit_material.refraction_color_and_chance.xyz * hit_record.dist);
+        }
 
-		// get the pre-fresnel chances
-		float specular_chance = hit_material.specular_and_coefficient.w;
-		float refraction_chance = hit_material.refraction_color_and_chance.w;
+        // get the pre-fresnel chances
+        float specular_chance = hit_material.specular_and_coefficient.w;
+        float refraction_chance = hit_material.refraction_color_and_chance.w;
 
-		float ior = hit_material.emissive_and_ior.w;
-     
-		// take fresnel into account for specularChance and adjust other chances.
-		// specular takes priority.
-		// chanceMultiplier makes sure we keep diffuse / refraction ratio the same.
-		float ray_probability = 1.0f;
-		if (specular_chance > 0.0f)
-		{ 
-			specular_chance = compute_fresnel_reflect_amount(
-				hit_record.hit_from_inside ? ior : 1.0,
-				!hit_record.hit_from_inside ? ior : 1.0,
-				ray.dir, hit_record.normal, hit_material.specular_and_coefficient.w, 1.0f);
+        float ior = hit_material.emissive_and_ior.w;
 
-			float chance_multiplier = (1.0f - specular_chance) / (1.0f - hit_material.specular_and_coefficient.w);
-			refraction_chance *= chance_multiplier;
-			//diffuseChance *= chanceMultiplier;
-		}
-     
-		// calculate whether we are going to do a diffuse, specular, or refractive ray
-		float do_specular = 0.0f;
-		float do_refraction = 0.0f;
-		float ray_select_roll = random_float_01(rng_state);
-		if (specular_chance > 0.0f && ray_select_roll < specular_chance) {
-			do_specular = 1.0f;
-			ray_probability = specular_chance;
-		} else if (refraction_chance > 0.0f && ray_select_roll < specular_chance + refraction_chance) {
-			do_refraction = 1.0f;
-			ray_probability = refraction_chance;
-		} else {
-			ray_probability = 1.0f - (specular_chance + refraction_chance);
-		}
+        // take fresnel into account for specularChance and adjust other chances.
+        // specular takes priority.
+        // chanceMultiplier makes sure we keep diffuse / refraction ratio the same.
+        float ray_probability = 1.0f;
+        if (specular_chance > 0.0f)
+        {
+            specular_chance = compute_fresnel_reflect_amount(
+            hit_record.hit_from_inside ? ior : 1.0,
+            !hit_record.hit_from_inside ? ior : 1.0,
+            ray.dir, hit_record.normal, hit_material.specular_and_coefficient.w, 1.0f);
 
-		// numerical problems can cause rayProbability to become small enough to cause a divide by zero.
-		ray_probability = max(ray_probability, 0.001f);
-		 
-		if (do_refraction == 1.0f) {
-			ray.origin = (ray.origin + ray.dir * hit_record.dist) - hit_record.normal * RAY_START_BIAS;
-		} else {
-			ray.origin = (ray.origin + ray.dir * hit_record.dist) + hit_record.normal * RAY_START_BIAS;
-		}
-      
-		// Calculate a new ray direction.
-		// Diffuse uses a normal oriented cosine weighted hemisphere sample.
-		// Perfectly smooth specular uses the reflection ray.
-		// Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
-		// Squaring the roughness is just a convention to make roughness feel more linear perceptually.
-		vec3 diffuse_ray_dir = normalize(hit_record.normal + random_unit_vector(rng_state));
+            float chance_multiplier = (1.0f - specular_chance) / (1.0f - hit_material.specular_and_coefficient.w);
+            refraction_chance *= chance_multiplier;
+            //diffuseChance *= chanceMultiplier;
+        }
 
-		// We'll use one roughness value for specular and refraction, at least for now.
-		float roughness = hit_material.albedo_and_roughness.w;
-     
-		vec3 specular_ray_dir = reflect(ray.dir, hit_record.normal);
-		specular_ray_dir = normalize(mix(specular_ray_dir, diffuse_ray_dir, roughness * roughness));
- 
-		vec3 refraction_ray_dir = refract(ray.dir, hit_record.normal, hit_record.hit_from_inside ? ior: 1.0f / ior);
-		refraction_ray_dir = normalize(mix(refraction_ray_dir, normalize(-hit_record.normal + random_unit_vector(rng_state)), roughness * roughness));
+        // calculate whether we are going to do a diffuse, specular, or refractive ray
+        float do_specular = 0.0f;
+        float do_refraction = 0.0f;
+        float ray_select_roll = random_float_01(rng_state);
+        if (specular_chance > 0.0f && ray_select_roll < specular_chance) {
+            do_specular = 1.0f;
+            ray_probability = specular_chance;
+        } else if (refraction_chance > 0.0f && ray_select_roll < specular_chance + refraction_chance) {
+            do_refraction = 1.0f;
+            ray_probability = refraction_chance;
+        } else {
+            ray_probability = 1.0f - (specular_chance + refraction_chance);
+        }
 
-		ray.dir = mix(diffuse_ray_dir, specular_ray_dir, do_specular);
-		ray.dir = mix(ray.dir, refraction_ray_dir, do_refraction);
-     
-		// add in emissive lighting
-		result += hit_material.emissive_and_ior.xyz * remaining_weight;
-     
-		// update the colorMultiplier. refraction doesn't alter the color until we hit the next thing, so we can do light absorption over distance.
-		if (do_refraction == 0.0f) {
-			remaining_weight *= mix(hit_material.albedo_and_roughness.xyz, hit_material.specular_and_coefficient.xyz, do_specular);
-		}
-     
-		// since we chose randomly between diffuse, specular, refract,
-		// we need to account for the times we didn't do one or the other.
-		remaining_weight /= ray_probability;
+        // numerical problems can cause rayProbability to become small enough to cause a divide by zero.
+        ray_probability = max(ray_probability, 0.001f);
 
-		// Russian Roulette
-		// As the throughput gets smaller, the ray is more likely to get terminated early.
-		// Survivors have their value boosted to make up for fewer samples being in the average.
-		{
-			float russian_roulette_prob = max(remaining_weight.r, max(remaining_weight.g, remaining_weight.b));
-			if (random_float_01(rng_state) > russian_roulette_prob) {
-				break;
-			}
-	 
-			// Add the energy we 'lose' by randomly terminating paths
-			remaining_weight *= 1.0f / russian_roulette_prob;            
-		}
+        if (do_refraction == 1.0f) {
+            ray.origin = (ray.origin + ray.dir * hit_record.dist) - hit_record.normal * RAY_START_BIAS;
+        } else {
+            ray.origin = (ray.origin + ray.dir * hit_record.dist) + hit_record.normal * RAY_START_BIAS;
+        }
 
-		// Terminate rays early when the maximum impact of further rays goes below a threshold.
-		if (all(lessThan(remaining_weight, vec3(0.01)))) {
-			// We potentially reduce brightness by a little bit this way, but
-			// the amount seems negligible.
-			break;
-		}
-	}
-	return result;
+        // Calculate a new ray direction.
+        // Diffuse uses a normal oriented cosine weighted hemisphere sample.
+        // Perfectly smooth specular uses the reflection ray.
+        // Rough (glossy) specular lerps from the smooth specular to the rough diffuse by the material roughness squared
+        // Squaring the roughness is just a convention to make roughness feel more linear perceptually.
+        vec3 diffuse_ray_dir = normalize(hit_record.normal + random_unit_vector(rng_state));
+
+        // We'll use one roughness value for specular and refraction, at least for now.
+        float roughness = hit_material.albedo_and_roughness.w;
+
+        vec3 specular_ray_dir = reflect(ray.dir, hit_record.normal);
+        specular_ray_dir = normalize(mix(specular_ray_dir, diffuse_ray_dir, roughness * roughness));
+
+        vec3 refraction_ray_dir = refract(ray.dir, hit_record.normal, hit_record.hit_from_inside ? ior: 1.0f / ior);
+        refraction_ray_dir = normalize(mix(refraction_ray_dir, normalize(-hit_record.normal + random_unit_vector(rng_state)), roughness * roughness));
+
+        ray.dir = mix(diffuse_ray_dir, specular_ray_dir, do_specular);
+        ray.dir = mix(ray.dir, refraction_ray_dir, do_refraction);
+
+        // add in emissive lighting
+        result += hit_material.emissive_and_ior.xyz * remaining_weight;
+
+        // update the colorMultiplier. refraction doesn't alter the color until we hit the next thing, so we can do light absorption over distance.
+        if (do_refraction == 0.0f) {
+            remaining_weight *= mix(hit_material.albedo_and_roughness.xyz, hit_material.specular_and_coefficient.xyz, do_specular);
+        }
+
+        // since we chose randomly between diffuse, specular, refract,
+        // we need to account for the times we didn't do one or the other.
+        remaining_weight /= ray_probability;
+
+        // Russian Roulette
+        // As the throughput gets smaller, the ray is more likely to get terminated early.
+        // Survivors have their value boosted to make up for fewer samples being in the average.
+        {
+            float russian_roulette_prob = max(remaining_weight.r, max(remaining_weight.g, remaining_weight.b));
+            if (random_float_01(rng_state) > russian_roulette_prob) {
+                break;
+            }
+
+            // Add the energy we 'lose' by randomly terminating paths
+            remaining_weight *= 1.0f / russian_roulette_prob;
+        }
+
+        // Terminate rays early when the maximum impact of further rays goes below a threshold.
+        if (all(lessThan(remaining_weight, vec3(0.01)))) {
+            // We potentially reduce brightness by a little bit this way, but
+            // the amount seems negligible.
+            break;
+        }
+    }
+    return result;
 }
 
 
 void main()
 {
-	init_rng();
-	const ivec2 screen_size = imageSize(inout_image);
-	//const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
 
-	const ivec2 this_pixel = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
 
-	if (this_pixel.x >= screen_size.x) {
+    init_rng();
+    const ivec2 screen_size = imageSize(inout_image);
+    //const ivec2 this_pixel = ivec2(gl_WorkGroupID.x, gl_WorkGroupID.y);
+
+    const ivec2 this_pixel = ivec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+
+    if (this_pixel.x >= screen_size.x) {
         return;
-	}
+    }
 
-	Ray ray;
+        #if 0
+    // Gamma correction test
+    if (this_pixel.x < screen_size.x / 2) {
+        imageStore(inout_image, this_pixel, vec4(vec3(0.5), 1));
+    } else {
+        vec3 linear_color = vec3(float((this_pixel.x % 2) == (this_pixel.y % 2)));
+        imageStore(inout_image, this_pixel, vec4(linear_color, 1));
+    }
+    return;
+    #endif
 
-	const uint progression_index = PushConstants.progression_index;
-	vec2 offset = eval_r2_sequence(progression_index);
-	make_primary_ray(this_pixel, offset, ray);
 
-	vec3 linear_color = compute_color_for_ray(ray);
+    Ray ray;
 
+    const uint progression_index = PushConstants.progression_index;
+    vec2 offset = eval_r2_sequence(progression_index);
+    make_primary_ray(this_pixel, offset, ray);
 
-	// Apply Reinhard tone mapping
-	linear_color *= ubo.exposure;
-	linear_color = linear_color / (vec3(1.0) + linear_color);
+    vec3 linear_color = compute_color_for_ray(ray);
 
-	if (ubo.apply_aces) {
-		// Apply ACES tone mapping
-		linear_color = aces_tone_mapping(linear_color);
-	}
+    // Apply Reinhard tone mapping
+    linear_color *= ubo.exposure;
+    linear_color = linear_color / (vec3(1.0) + linear_color);
 
-	// Apply a gamma correction. Since we output linear color into an sRGB target,
-	// the system will apply proper gamma correction. We can effectively modify
-	// that system gamma with a factor (applying pow(color, 1/gamma) twice will
-	// result in pow(color, 1/(system_gamma * gamma_factor))).
-	linear_color = pow(linear_color, vec3(1.0 / ubo.gamma_factor));
+    if (ubo.apply_aces) {
+        // Apply ACES tone mapping
+        linear_color = aces_tone_mapping(linear_color);
+    }
 
-	linear_color = clamp(linear_color, vec3(0), vec3(1));
+    // Apply a gamma correction. Since we output linear color into an sRGB target,
+    // the system will apply proper gamma correction. We can effectively modify
+    // that system gamma with a factor (applying pow(color, 1/gamma) twice will
+    // result in pow(color, 1/(system_gamma * gamma_factor))).
+    linear_color = pow(linear_color, vec3(1.0 / ubo.gamma_factor));
 
-	vec4 accum_color = imageLoad(inout_image, this_pixel);
-	// Branchless condition: if we just started a progression, we treat
-	// the accumulation count as 0. This will overwrite the full result with our
-	// color, saving us an image clear.
-	float accum_count = accum_color.a * float(progression_index > 0);
-	vec3 new_accum_rgb = (accum_count * accum_color.rgb + linear_color) / (accum_count + 1);
-	new_accum_rgb = min(new_accum_rgb, vec3(1));
+    linear_color = clamp(linear_color, vec3(0), vec3(1));
 
-	// Not that we can output linear color. We render into an sRGB attachment
-	// and get the conversion for free.
-	imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
+    vec4 accum_color = imageLoad(inout_image, this_pixel);
+    // Branchless condition: if we just started a progression, we treat
+    // the accumulation count as 0. This will overwrite the full result with our
+    // color, saving us an image clear.
+    float accum_count = accum_color.a * float(progression_index > 0);
+    vec3 new_accum_rgb = (accum_count * accum_color.rgb + linear_color) / (accum_count + 1);
+    new_accum_rgb = min(new_accum_rgb, vec3(1));
+
+    // Not that we can output linear color. We render into an sRGB attachment
+    // and get the conversion for free.
+    imageStore(inout_image, this_pixel, vec4(new_accum_rgb, accum_count + 1));
 }
