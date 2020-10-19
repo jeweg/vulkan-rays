@@ -555,27 +555,16 @@ int main()
                         .setAttachments(vk::AttachmentDescription{}
                                             .setFormat(window.get_swap_chain().get_format())
                                             .setSamples(vk::SampleCountFlagBits::e1)
-                                            .setLoadOp(vk::AttachmentLoadOp::eClear)
+                                            .setLoadOp(vk::AttachmentLoadOp::eDontCare)
                                             .setStoreOp(vk::AttachmentStoreOp::eStore)
                                             .setStencilLoadOp(vk::AttachmentLoadOp::eDontCare)
                                             .setStencilStoreOp(vk::AttachmentStoreOp::eDontCare)
                                             .setInitialLayout(vk::ImageLayout::eUndefined)
                                             .setFinalLayout(vk::ImageLayout::ePresentSrcKHR))
-                        //.setFinalLayout(vk::ImageLayout::eColorAttachmentOptimal))
                         .setSubpasses(vk::SubpassDescription{}
                                           .setPipelineBindPoint(vk::PipelineBindPoint::eGraphics)
                                           .setColorAttachments(vk::AttachmentReference{}.setAttachment(0).setLayout(
-                                              vk::ImageLayout::eColorAttachmentOptimal)))
-                        .setDependencies(vk::SubpassDependency{}
-                                             .setSrcSubpass(VK_SUBPASS_EXTERNAL)
-                                             .setDstSubpass(0)
-                                             .setSrcStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                                             .setSrcAccessMask({})
-                                             .setDstStageMask(vk::PipelineStageFlagBits::eColorAttachmentOutput)
-                                             .setDstAccessMask(
-                                                 // TODO: probably no read access necessary here!
-                                                 vk::AccessFlagBits::eColorAttachmentRead
-                                                 | vk::AccessFlagBits::eColorAttachmentWrite)));
+                                              vk::ImageLayout::eColorAttachmentOptimal))));
 
                 std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {
                     vk::PipelineShaderStageCreateInfo{}
@@ -736,6 +725,7 @@ int main()
                 //----------------------------------------------------------------------
                 // Compute dispatch
 
+                // TODO: should be replacable by a one-shot layout transition command before the first frame.
                 cmd_buffer.pipelineBarrier(
                     vk::PipelineStageFlagBits::eTopOfPipe,
                     vk::PipelineStageFlagBits::eComputeShader,
@@ -746,7 +736,6 @@ int main()
                         .setImage(image)
                         .setOldLayout(vk::ImageLayout::eUndefined)
                         .setNewLayout(vk::ImageLayout::eGeneral)
-                        .setDstAccessMask(vk::AccessFlagBits::eShaderWrite)
                         .setSubresourceRange(vk::ImageSubresourceRange{}
                                                  .setAspectMask(vk::ImageAspectFlagBits::eColor)
                                                  .setBaseMipLevel(0)
@@ -814,6 +803,7 @@ int main()
                         .setImage(image)
                         .setOldLayout(vk::ImageLayout::eGeneral)
                         .setNewLayout(vk::ImageLayout::eGeneral)
+                        .setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
                         .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
                         .setSubresourceRange(vk::ImageSubresourceRange{}
                                                  .setAspectMask(vk::ImageAspectFlagBits::eColor)
