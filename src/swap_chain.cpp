@@ -92,6 +92,8 @@ SwapChain::SwapChain(
             return weight;
         });
 
+    std::cerr << "Selected present mode " << to_string(_present_mode) << "\n";
+
     _num_frames_in_flight = 1;
     // TODO: if (is_android or perhaps is_mobile) { _num_frames_in_flight = 3; }
 

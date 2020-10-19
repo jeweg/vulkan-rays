@@ -221,7 +221,7 @@ int main()
             "VK_KHR_swapchain", "VK_KHR_get_memory_requirements2", "VK_KHR_dedicated_allocation"};
 
         Device device(instance.get(), phys_device, window.get_surface());
-        window.make_swap_chain(device, false, false);
+        window.make_swap_chain(device, true, false);
 
         GuiHandler gui_handler;
 
