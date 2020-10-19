@@ -797,20 +797,11 @@ int main()
                     vk::PipelineStageFlagBits::eComputeShader,
                     vk::PipelineStageFlagBits::eFragmentShader,
                     vk::DependencyFlagBits::eByRegion,
-                    {},
-                    {},
-                    vk::ImageMemoryBarrier{}
-                        .setImage(image)
-                        .setOldLayout(vk::ImageLayout::eGeneral)
-                        .setNewLayout(vk::ImageLayout::eGeneral)
+                    vk::MemoryBarrier{}
                         .setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
-                        .setDstAccessMask(vk::AccessFlagBits::eShaderRead)
-                        .setSubresourceRange(vk::ImageSubresourceRange{}
-                                                 .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                                                 .setBaseMipLevel(0)
-                                                 .setLayerCount(1)
-                                                 .setLevelCount(1)
-                                                 .setBaseArrayLayer(0)));
+                        .setSrcAccessMask(vk::AccessFlagBits::eShaderRead),
+                    {},
+                    {});
 
                 FramebufferKey fb_key;
                 fb_key.render_pass = graphics_pipeline.render_pass.get();
