@@ -29,6 +29,7 @@
 #include <iostream>
 #include <chrono>
 #include <optional>
+#include <vector>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
@@ -229,14 +230,20 @@ int main()
         // Static resources (not dependent on window size)
 
         vk::UniquePipelineCache pipeline_cache = device.get().createPipelineCacheUnique(vk::PipelineCacheCreateInfo{});
+        std::vector<vk::DescriptorPoolSize> desc_pool_sizes({
+                            vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100),
+                            vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(100)});
 
         vk::UniqueDescriptorPool descriptor_pool = device.get().createDescriptorPoolUnique(
             vk::DescriptorPoolCreateInfo{}
                 .setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet)
                 .setMaxSets(100)
+                .setPoolSizes(desc_pool_sizes));
+            /*
                 .setPoolSizes(std::initializer_list<vk::DescriptorPoolSize>{
                     vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eStorageImage).setDescriptorCount(100),
                     vk::DescriptorPoolSize{}.setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(100)}));
+                    */
 
         vk::UniqueSampler image_sampler = device.get().createSamplerUnique(vk::SamplerCreateInfo{});
 
@@ -351,9 +358,15 @@ int main()
                               .setDescriptorType(vk::DescriptorType::eUniformBuffer)
                               .setDescriptorCount(1)
                               .setStageFlags(vk::ShaderStageFlagBits::eCompute);
+            /*
             compute_pipeline.dsl =
                 device.get().createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(
                     std::initializer_list<vk::DescriptorSetLayoutBinding>{dslb_0, dslb_1}));
+                    */
+
+            std::vector<vk::DescriptorSetLayoutBinding> dslb({dslb_0, dslb_1});
+            compute_pipeline.dsl =
+                device.get().createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo{}.setBindings(dslb));
 
             compute_pipeline.layout = device.get().createPipelineLayoutUnique(
                 vk::PipelineLayoutCreateInfo{}
